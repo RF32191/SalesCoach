@@ -1,0 +1,100 @@
+import SwiftUI
+
+struct TrainingHubView: View {
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 20) {
+                    NavigationLink {
+                        VoiceRoleplaySetupView()
+                    } label: {
+                        FeatureCard(
+                            title: "Voice AI Roleplay",
+                            subtitle: "Speak with AI customers in real time",
+                            icon: "mic.circle.fill",
+                            accentColor: AppTheme.electricBlue
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    SectionHeader(title: "Training Scenarios")
+
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                        ForEach(TrainingScenario.allCases) { scenario in
+                            NavigationLink {
+                                VoiceRoleplaySetupView(preselectedScenario: scenario)
+                            } label: {
+                                ScenarioTile(scenario: scenario)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    SectionHeader(title: "Customer Personalities")
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            ForEach(CustomerPersonality.allCases) { personality in
+                                PersonalityChip(personality: personality)
+                            }
+                        }
+                    }
+                }
+                .padding()
+            }
+            .appBackground()
+            .navigationTitle("Train")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.large)
+            #endif
+        }
+    }
+}
+
+struct ScenarioTile: View {
+    let scenario: TrainingScenario
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: scenario.icon)
+                .font(.title2)
+                .foregroundStyle(AppTheme.electricBlue)
+            Text(scenario.rawValue)
+                .font(.caption.bold())
+                .foregroundStyle(AppTheme.textPrimary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .cardStyle()
+    }
+}
+
+struct PersonalityChip: View {
+    let personality: CustomerPersonality
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: personality.icon)
+                    .foregroundStyle(AppTheme.electricBlue)
+                Text(personality.rawValue)
+                    .font(.caption.bold())
+                    .foregroundStyle(AppTheme.textPrimary)
+            }
+            Text(personality.description)
+                .font(.caption2)
+                .foregroundStyle(AppTheme.textSecondary)
+                .lineLimit(2)
+        }
+        .frame(width: 160)
+        .padding(12)
+        .background(AppTheme.navyCard)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppTheme.border, lineWidth: 1)
+        )
+    }
+}

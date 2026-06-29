@@ -1,0 +1,112 @@
+import SwiftUI
+
+struct StatCard: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let title: String
+    let value: String
+    let icon: String
+    var accentColor: Color = AppTheme.electricBlueBright
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: icon)
+                    .foregroundStyle(accentColor)
+                Spacer()
+            }
+            Text(value)
+                .font(.title2.bold())
+                .foregroundStyle(AppTheme.primaryText(for: colorScheme))
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText(for: colorScheme))
+        }
+        .cardStyle()
+    }
+}
+
+struct FeatureCard: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let title: String
+    let subtitle: String
+    let icon: String
+    var accentColor: Color = AppTheme.electricBlueBright
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundStyle(accentColor)
+                .frame(width: 44, height: 44)
+                .background(
+                    LinearGradient(
+                        colors: [accentColor.opacity(0.22), accentColor.opacity(0.08)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.primaryText(for: colorScheme))
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText(for: colorScheme))
+                    .lineLimit(2)
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.caption.bold())
+                .foregroundStyle(AppTheme.electricBlueBright.opacity(0.8))
+        }
+        .cardStyle()
+    }
+}
+
+struct SectionHeader: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let title: String
+    var action: (() -> Void)? = nil
+    var actionTitle: String = "See All"
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(AppTheme.primaryText(for: colorScheme))
+            Spacer()
+            if let action {
+                Button(actionTitle, action: action)
+                    .font(.subheadline.bold())
+                    .foregroundStyle(AppTheme.electricBlueBright)
+            }
+        }
+    }
+}
+
+struct EmptyStateView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let icon: String
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: icon)
+                .font(.system(size: 48))
+                .foregroundStyle(AppTheme.electricBlueBright.opacity(0.5))
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(AppTheme.primaryText(for: colorScheme))
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(AppTheme.secondaryText(for: colorScheme))
+                .multilineTextAlignment(.center)
+        }
+        .padding(32)
+    }
+}
