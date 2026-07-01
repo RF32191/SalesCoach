@@ -95,6 +95,22 @@ struct SubscriptionView: View {
                         .foregroundStyle(AppTheme.electricBlueBright)
                 }
             }
+
+            if let tokenLimit = appState.subscription.usage.tier.monthlyTokenLimit {
+                HStack {
+                    Text("AI tokens used")
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.secondaryText(for: colorScheme))
+                    Spacer()
+                    Text("\(appState.subscription.usage.aiTokensUsedThisMonth.formatted()) / \(tokenLimit.formatted())")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(AppTheme.electricBlueBright)
+                }
+            } else {
+                Text("Unlimited AI tokens")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.tealGreen)
+            }
         }
         .cardStyle()
     }

@@ -8,12 +8,23 @@ struct VoiceSettingsSheet: View {
     @State private var selectedAccentId: String?
     @State private var speechRate: Float
     @State private var autoSpeak: Bool
+    @State private var useAIVoice: Bool
+    @State private var selectedAIVoice: OpenAIVoiceOption
+    @State private var aiSpeechSpeed: Double
+    @State private var usePersonalityVoice: Bool
+    @State private var selectedTTSModel: OpenAITTSModel
+    @State private var isPreviewing = false
 
     init(voice: VoiceService) {
         _selectedLanguage = State(initialValue: voice.settings.language)
         _selectedAccentId = State(initialValue: voice.settings.accentVoiceId)
         _speechRate = State(initialValue: voice.settings.speechRate)
         _autoSpeak = State(initialValue: voice.settings.autoSpeakResponses)
+        _useAIVoice = State(initialValue: voice.settings.useAIVoice)
+        _selectedAIVoice = State(initialValue: OpenAIVoiceOption(rawValue: voice.settings.openAIVoiceId) ?? .shimmer)
+        _aiSpeechSpeed = State(initialValue: voice.settings.aiSpeechSpeed)
+        _usePersonalityVoice = State(initialValue: voice.settings.usePersonalityVoice)
+        _selectedTTSModel = State(initialValue: OpenAITTSModel(rawValue: voice.settings.ttsModel) ?? .hd)
     }
 
     private var accents: [VoiceAccentOption] {
@@ -23,7 +34,49 @@ struct VoiceSettingsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Language") {
+                Section {
+                    Toggle("Use natural AI voice", isOn: $useAIVoice)
+                    Toggle("Match voice to customer personality", isOn: $usePersonalityVoice)
+                    if !AppConfig.isAIConfigured {
+                        Text("Requires Railway or OpenAI API configured.")
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.warningOrange)
+                    }
+                } header: {
+                    Text("AI Voice")
+                } footer: {
+                    Text("Personality matching gives angry customers a deeper tone, executives a faster pace, and warm leads a friendly shimmer voice.")
+                }
+
+                if useAIVoice {
+                    Section("Voice Quality") {
+                        Picker("Model", selection: $selectedTTSModel) {
+                            ForEach(OpenAITTSModel.allCases) { model in
+                                Text("\(model.label) — \(model.description)").tag(model)
+                            }
+                        }
+                    }
+
+                    if !usePersonalityVoice {
+                        Section("Default Customer Voice") {
+                            Picker("Voice", selection: $selectedAIVoice) {
+                                ForEach(OpenAIVoiceOption.allCases) { voice in
+                                    Text("\(voice.label) — \(voice.description)").tag(voice)
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Speech pace")
+                                Slider(value: $aiSpeechSpeed, in: 0.82...1.08)
+                                Text(String(format: "%.2fx", aiSpeechSpeed))
+                                    .font(.caption)
+                                    .foregroundStyle(AppTheme.textMuted)
+                            }
+                        }
+                    }
+                }
+
+                Section("System Voice Fallback") {
                     Picker("Language", selection: $selectedLanguage) {
                         ForEach(VoiceLanguageOption.supported) { language in
                             Text(language.label).tag(language)
@@ -33,11 +86,9 @@ struct VoiceSettingsSheet: View {
                         appState.voice.updateLanguage(newValue)
                         selectedAccentId = VoiceAccentOption.accents(for: newValue).first?.voiceIdentifier
                     }
-                }
 
-                Section("Accent / Voice") {
                     if accents.isEmpty {
-                        Text("No voices available for this language.")
+                        Text("No system voices available for this language.")
                             .foregroundStyle(AppTheme.textSecondary)
                     } else {
                         Picker("Accent", selection: $selectedAccentId) {
@@ -46,31 +97,30 @@ struct VoiceSettingsSheet: View {
                             }
                         }
                     }
+
+                    VStack(alignment: .leading) {
+                        Text("System speaking speed")
+                        Slider(value: $speechRate, in: 0.35...0.55)
+                    }
                 }
 
-                Section("Speech") {
+                Section("Behavior") {
                     Toggle("AI speaks responses aloud", isOn: $autoSpeak)
-                    VStack(alignment: .leading) {
-                        Text("Speaking speed")
-                            .font(.subheadline)
-                        Slider(value: $speechRate, in: 0.35...0.55)
-                        Text(speechRate < 0.45 ? "Slower" : speechRate > 0.52 ? "Faster" : "Normal")
-                            .font(.caption)
-                            .foregroundStyle(AppTheme.textSecondary)
-                    }
                 }
 
                 Section {
-                    Button("Test Voice") {
-                        Task {
-                            appState.voice.settings.speechRate = speechRate
-                            appState.voice.settings.autoSpeakResponses = true
-                            if let accentId = selectedAccentId {
-                                appState.voice.settings.accentVoiceId = accentId
+                    Button {
+                        previewVoice()
+                    } label: {
+                        HStack {
+                            Text("Preview Voice")
+                            Spacer()
+                            if isPreviewing {
+                                ProgressView()
                             }
-                            await appState.voice.speak("Hi, I'm your AI sales customer. Let's practice closing this deal.")
                         }
                     }
+                    .disabled(isPreviewing)
                 }
             }
             .navigationTitle("Voice Settings")
@@ -86,12 +136,33 @@ struct VoiceSettingsSheet: View {
         }
     }
 
-    private func save() {
+    private func previewVoice() {
+        isPreviewing = true
+        saveDraftSettings()
+        Task {
+            let line = usePersonalityVoice
+                ? CustomerPersonality.skeptical.recommendedVoice.previewLine
+                : selectedAIVoice.previewLine
+            await appState.voice.speak(line, force: true, personality: usePersonalityVoice ? .skeptical : nil)
+            isPreviewing = false
+        }
+    }
+
+    private func saveDraftSettings() {
         appState.voice.settings.languageId = selectedLanguage.id
         appState.voice.settings.accentVoiceId = selectedAccentId
         appState.voice.settings.speechRate = speechRate
         appState.voice.settings.autoSpeakResponses = autoSpeak
+        appState.voice.settings.useAIVoice = useAIVoice
+        appState.voice.settings.openAIVoiceId = selectedAIVoice.rawValue
+        appState.voice.settings.aiSpeechSpeed = aiSpeechSpeed
+        appState.voice.settings.usePersonalityVoice = usePersonalityVoice
+        appState.voice.settings.ttsModel = selectedTTSModel.rawValue
         appState.voice.applyLanguageSettings()
+    }
+
+    private func save() {
+        saveDraftSettings()
         dismiss()
     }
 }

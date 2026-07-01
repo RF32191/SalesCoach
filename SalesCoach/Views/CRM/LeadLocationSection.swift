@@ -47,9 +47,9 @@ struct LeadLocationSection: View {
 
             Toggle(isOn: $location.pinReminderEnabled) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Pin reminder")
+                    Text("Proximity briefing")
                         .foregroundStyle(AppTheme.textPrimary)
-                    Text("Notify me when I'm near this location")
+                    Text("Alert me with contact facts when I'm nearby")
                         .font(.caption)
                         .foregroundStyle(AppTheme.textSecondary)
                 }

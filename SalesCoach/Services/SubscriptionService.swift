@@ -12,7 +12,14 @@ final class SubscriptionService {
             usage = stored
             resetIfNeeded()
         } else {
-            usage = SubscriptionUsage(tier: .free, roleplaysUsedThisMonth: 0, chatMessagesUsedThisMonth: 0, resetDate: .now)
+            usage = SubscriptionUsage(
+                tier: .free,
+                roleplaysUsedThisMonth: 0,
+                chatMessagesUsedThisMonth: 0,
+                aiTokensUsedThisMonth: 0,
+                discoverySearchesUsedThisMonth: 0,
+                resetDate: .now
+            )
         }
     }
 
@@ -33,6 +40,21 @@ final class SubscriptionService {
         save()
     }
 
+    func recordTokenUsage(_ tokens: Int) {
+        guard tokens > 0 else { return }
+        usage.aiTokensUsedThisMonth += tokens
+        save()
+    }
+
+    func recordDiscoverySearch() {
+        usage.discoverySearchesUsedThisMonth += 1
+        save()
+    }
+
+    static func estimateTokens(input: String, output: String = "") -> Int {
+        max(1, (input.count + output.count) / 4)
+    }
+
     func canStartRoleplay() -> Bool {
         resetIfNeeded()
         return usage.canStartRoleplay()
@@ -44,11 +66,23 @@ final class SubscriptionService {
         return usage.chatMessagesUsedThisMonth < 20
     }
 
+    func canUseAI(estimatedTokens: Int = 250) -> Bool {
+        resetIfNeeded()
+        return usage.canUseTokens(estimatedTokens)
+    }
+
+    func canSearchProspects() -> Bool {
+        resetIfNeeded()
+        return usage.canSearchProspects()
+    }
+
     private func resetIfNeeded() {
         let calendar = Calendar.current
         if !calendar.isDate(usage.resetDate, equalTo: .now, toGranularity: .month) {
             usage.roleplaysUsedThisMonth = 0
             usage.chatMessagesUsedThisMonth = 0
+            usage.aiTokensUsedThisMonth = 0
+            usage.discoverySearchesUsedThisMonth = 0
             usage.resetDate = .now
             save()
         }

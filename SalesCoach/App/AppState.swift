@@ -12,6 +12,11 @@ final class AppState {
     let voice = VoiceService()
     let notifications = NotificationService()
     let location = LocationService()
+    let discovery = ProspectDiscoveryService()
+    let certifications = CertificationService()
+    let teamGoals = TeamGoalsService()
+
+    var nearbyLeadBriefing: Lead?
 
     init() {
         crm.syncGeofencing = { [weak self] leads in
@@ -20,7 +25,19 @@ final class AppState {
         location.leadLookup = { [weak self] leadId in
             self?.crm.leads.first { $0.id == leadId }
         }
+        location.onProximityEnter = { [weak self] lead in
+            guard let self else { return }
+            self.nearbyLeadBriefing = lead
+            self.notifications.notifyProximity(to: lead)
+        }
         location.configure(notificationService: notifications)
+
+        OpenAIService.shared.onTokensUsed = { [weak self] tokens in
+            self?.subscription.recordTokenUsage(tokens)
+        }
+        voice.onTokensUsed = { [weak self] tokens in
+            self?.subscription.recordTokenUsage(tokens)
+        }
     }
 
     func loadUserData() {
@@ -31,6 +48,9 @@ final class AppState {
         if let teamId = user.teamId {
             team.loadTeam(teamId: teamId)
         }
+        certifications.load(for: user.id)
+        teamGoals.load(for: user.id)
+        certifications.evaluate(sessions: training.sessions.filter { $0.userId == user.id })
         location.startGeofencing(for: crm.leads.filter { $0.location.pinReminderEnabled && $0.location.hasCoordinates })
     }
 
@@ -38,5 +58,6 @@ final class AppState {
         await notifications.requestAuthorization()
         location.requestAuthorization()
         location.requestAlwaysAuthorizationIfNeeded()
+        await voice.requestPermissions()
     }
 }

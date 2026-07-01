@@ -3,6 +3,8 @@ import UIKit
 
 struct MainTabView: View {
     @Environment(AppState.self) private var appState
+    @AppStorage("salescoach_onboarding_complete") private var onboardingComplete = false
+    @State private var showOnboardingTour = false
 
     init() {
         let appearance = UITabBarAppearance()
@@ -19,28 +21,35 @@ struct MainTabView: View {
                     Label("Home", systemImage: "house.fill")
                 }
 
-            ChatView()
-                .tabItem {
-                    Label("Coach", systemImage: "bubble.left.and.bubble.right.fill")
-                }
-
-            TrainingHubView()
-                .tabItem {
-                    Label("Train", systemImage: "mic.fill")
-                }
-
-            if appState.subscription.usage.tier.hasCRM {
-                CRMView()
-                    .tabItem {
-                        Label("CRM", systemImage: "person.crop.rectangle.stack.fill")
-                    }
-            }
-
             MoreView()
                 .tabItem {
                     Label("More", systemImage: "ellipsis.circle.fill")
                 }
         }
         .tint(AppTheme.electricBlueBright)
+        .sheet(item: Binding(
+            get: { appState.nearbyLeadBriefing },
+            set: { appState.nearbyLeadBriefing = $0 }
+        )) { lead in
+            ProximityBriefingView(lead: lead)
+        }
+        .onAppear {
+            appState.loadUserData()
+            Task {
+                await appState.setupPermissions()
+            }
+            if !onboardingComplete {
+                showOnboardingTour = true
+            }
+        }
+        .overlay {
+            if showOnboardingTour {
+                Color.black.opacity(0.55).ignoresSafeArea()
+                OnboardingTourView(isPresented: $showOnboardingTour)
+            }
+        }
+        .onChange(of: showOnboardingTour) { _, isShowing in
+            if !isShowing { onboardingComplete = true }
+        }
     }
 }

@@ -1,5 +1,6 @@
 import CoreLocation
 import MapKit
+import UIKit
 
 @MainActor
 @Observable
@@ -9,8 +10,11 @@ final class LocationService: NSObject {
     var errorMessage: String?
 
     var leadLookup: ((String) -> Lead?)?
+    var onProximityEnter: ((Lead) -> Void)?
     private let manager = CLLocationManager()
     private var locationContinuation: CheckedContinuation<CLLocationCoordinate2D?, Never>?
+    private var locationTimeoutTask: Task<Void, Never>?
+    private var awaitingAuthorizationForLocation = false
     private weak var notificationService: NotificationService?
     private var monitoredLeadIds: Set<String> = []
 
@@ -26,8 +30,45 @@ final class LocationService: NSObject {
         self.notificationService = notificationService
     }
 
+    var isLocationAuthorized: Bool {
+        authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways
+    }
+
+    var locationStatusMessage: String {
+        switch authorizationStatus {
+        case .notDetermined: "Location needed to find nearby companies"
+        case .restricted, .denied: "Enable location in Settings to search nearby businesses"
+        case .authorizedWhenInUse, .authorizedAlways: currentAddressLabel ?? "Current location locked"
+        @unknown default: "Location unavailable"
+        }
+    }
+
+    var currentAddressLabel: String?
+
     func requestAuthorization() {
+        guard authorizationStatus == .notDetermined else { return }
         manager.requestWhenInUseAuthorization()
+    }
+
+    func openSettingsIfNeeded() {
+        #if os(iOS)
+        guard authorizationStatus == .denied || authorizationStatus == .restricted,
+              let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+        #endif
+    }
+
+    func ensureCurrentLocation() async -> CLLocationCoordinate2D? {
+        if let coordinate = currentCoordinate {
+            return coordinate
+        }
+
+        if authorizationStatus == .denied || authorizationStatus == .restricted {
+            errorMessage = "Allow location access to search companies near you."
+            return nil
+        }
+
+        return await requestCurrentLocation()
     }
 
     func requestAlwaysAuthorizationIfNeeded() {
@@ -37,24 +78,35 @@ final class LocationService: NSObject {
     }
 
     func requestCurrentLocation() async -> CLLocationCoordinate2D? {
-        guard CLLocationManager.locationServicesEnabled() else {
-            errorMessage = "Location services are disabled."
-            return nil
+        if let coordinate = currentCoordinate {
+            return coordinate
         }
 
-        if authorizationStatus == .notDetermined {
-            requestAuthorization()
-        }
-
-        guard authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways else {
+        if authorizationStatus == .denied || authorizationStatus == .restricted {
             errorMessage = "Location access is required to pin leads."
             return nil
         }
 
-        manager.requestLocation()
-
         return await withCheckedContinuation { continuation in
+            resumePendingLocation(with: nil, keepWaiting: false)
+
             locationContinuation = continuation
+            locationTimeoutTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(12))
+                if locationContinuation != nil {
+                    resumePendingLocation(with: currentCoordinate)
+                }
+            }
+
+            switch authorizationStatus {
+            case .notDetermined:
+                awaitingAuthorizationForLocation = true
+                manager.requestWhenInUseAuthorization()
+            case .authorizedWhenInUse, .authorizedAlways:
+                manager.requestLocation()
+            default:
+                resumePendingLocation(with: nil)
+            }
         }
     }
 
@@ -103,36 +155,76 @@ final class LocationService: NSObject {
 
         manager.startUpdatingLocation()
     }
+
+    private func resumePendingLocation(with coordinate: CLLocationCoordinate2D?, keepWaiting: Bool = false) {
+        locationTimeoutTask?.cancel()
+        locationTimeoutTask = nil
+
+        if !keepWaiting {
+            locationContinuation?.resume(returning: coordinate)
+            locationContinuation = nil
+            awaitingAuthorizationForLocation = false
+        }
+    }
+
+    private func finishLocationRequest(with coordinate: CLLocationCoordinate2D?) {
+        if let coordinate {
+            currentCoordinate = coordinate
+        }
+        resumePendingLocation(with: coordinate ?? currentCoordinate)
+    }
+
+    private func beginSingleLocationUpdate() {
+        guard isLocationAuthorized else {
+            finishLocationRequest(with: nil)
+            return
+        }
+        manager.requestLocation()
+    }
 }
 
 extension LocationService: CLLocationManagerDelegate {
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         Task { @MainActor in
             authorizationStatus = manager.authorizationStatus
+
+            if isLocationAuthorized {
+                if awaitingAuthorizationForLocation || locationContinuation != nil {
+                    beginSingleLocationUpdate()
+                }
+            } else if authorizationStatus == .denied || authorizationStatus == .restricted {
+                errorMessage = "Allow location access to search companies near you."
+                finishLocationRequest(with: nil)
+            }
         }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         Task { @MainActor in
-            let coordinate = locations.last?.coordinate
+            guard let coordinate = locations.last?.coordinate else { return }
             currentCoordinate = coordinate
-            locationContinuation?.resume(returning: coordinate)
-            locationContinuation = nil
+            finishLocationRequest(with: coordinate)
+
+            if let geo = await reverseGeocode(coordinate: coordinate) {
+                currentAddressLabel = geo.displayAddress.isEmpty ? nil : geo.displayAddress
+            }
         }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         Task { @MainActor in
+            if let clError = error as? CLError, clError.code == .locationUnknown, locationContinuation != nil {
+                return
+            }
             errorMessage = error.localizedDescription
-            locationContinuation?.resume(returning: nil)
-            locationContinuation = nil
+            finishLocationRequest(with: currentCoordinate)
         }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
         Task { @MainActor in
             if let lead = leadLookup?(region.identifier) {
-                notificationService?.notifyProximity(to: lead)
+                onProximityEnter?(lead)
             } else {
                 notificationService?.scheduleGeofenceReminder(leadId: region.identifier)
             }

@@ -3,12 +3,6 @@ import SwiftUI
 struct MoreView: View {
     @Environment(AppState.self) private var appState
 
-    private var aiBackendStatus: String {
-        if AppConfig.isRailwayConfigured { return "Railway" }
-        if AppConfig.isOpenAIConfigured { return "OpenAI Direct" }
-        return "Mock AI"
-    }
-
     var body: some View {
         NavigationStack {
             List {
@@ -68,6 +62,12 @@ struct MoreView: View {
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
 
+    private var aiBackendStatus: String {
+        if AppConfig.isRailwayConfigured { return "Railway" }
+        if AppConfig.isOpenAIConfigured { return "OpenAI Direct" }
+        return "Mock AI"
+    }
+
     var body: some View {
         List {
             Section("Profile") {
@@ -78,6 +78,17 @@ struct SettingsView: View {
                     if let company = user.companyName {
                         LabeledContent("Company", value: company)
                     }
+                    if let category = user.salesCategory {
+                        LabeledContent("Sales Team", value: category.rawValue)
+                    }
+                }
+            }
+
+            Section("Sales Vertical") {
+                NavigationLink {
+                    SalesTeamSetupView(isChangingCategory: true)
+                } label: {
+                    Label("Change Sales Team Category", systemImage: "building.2.fill")
                 }
             }
 

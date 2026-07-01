@@ -19,6 +19,7 @@ xcuserdata/
 .env
 .env.local
 *.pem
+SalesCoach/Config/LocalSecrets.swift
 
 # Node
 node_modules/

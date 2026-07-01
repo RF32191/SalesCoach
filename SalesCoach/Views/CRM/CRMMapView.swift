@@ -19,6 +19,13 @@ struct CRMMapView: View {
     }
 
     var body: some View {
+        ZStack(alignment: .top) {
+            mapContent
+            mapOverlay
+        }
+    }
+
+    private var mapContent: some View {
         Map(initialPosition: .region(defaultRegion)) {
             ForEach(leadsWithPins) { lead in
                 if let coordinate = lead.location.coordinate {
@@ -58,15 +65,35 @@ struct CRMMapView: View {
             }
         }
         .mapStyle(.standard(elevation: .realistic))
-        .overlay(alignment: .top) {
+    }
+
+    private var mapOverlay: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Label("\(leadsWithPins.count) pinned clients", systemImage: "mappin.and.ellipse")
+                    .font(.caption.bold())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(AppTheme.navyCard.opacity(0.92))
+                    .clipShape(Capsule())
+                Spacer()
+            }
+            .padding(.horizontal)
+            .padding(.top, 12)
+
             if leadsWithPins.isEmpty {
                 Text("Add GPS locations to your leads to see them on the map.")
                     .font(.caption)
-                    .padding(10)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
                     .background(AppTheme.navyCard.opacity(0.9))
-                    .clipShape(Capsule())
-                    .padding(.top, 12)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal)
             }
+
+            Spacer()
         }
     }
 }

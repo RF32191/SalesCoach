@@ -4,15 +4,29 @@ struct LeadDetailView: View {
     @Environment(AppState.self) private var appState
     @State var lead: Lead
     @State private var showFollowUp = false
+    @State private var showScheduleFollowUp = false
     @State private var isUpdatingAction = false
     @State private var newActivitySummary = ""
     @State private var newActivityType: LeadActivityType = .note
+    @State private var preCallBriefing: PreCallBriefing?
+    @State private var isLoadingBriefing = false
 
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 headerSection
+                dealHealthSection
+                CRMQuickActionsBar(
+                    lead: lead,
+                    onLogCall: { logQuickContact(type: .call, summary: "Outbound call with \(lead.name)") },
+                    onLogEmail: { logQuickContact(type: .email, summary: "Sent email to \(lead.name)") },
+                    onScheduleFollowUp: { showScheduleFollowUp = true },
+                    onGenerateFollowUp: { showFollowUp = true }
+                )
                 dealInfoSection
+                dealCoachingSection
+                timelineSection
+                ContactIntelForm(intel: $lead.contactIntel)
                 LeadLocationSection(location: $lead.location)
                 aiActionSection
                 activitySection
@@ -35,8 +49,114 @@ struct LeadDetailView: View {
         .sheet(isPresented: $showFollowUp) {
             FollowUpGeneratorView(lead: lead)
         }
+        .confirmationDialog("Schedule Follow-Up", isPresented: $showScheduleFollowUp) {
+            Button("Tomorrow") { scheduleFollowUp(days: 1) }
+            Button("In 3 Days") { scheduleFollowUp(days: 3) }
+            Button("Next Week") { scheduleFollowUp(days: 7) }
+            Button("Cancel", role: .cancel) {}
+        }
         .onChange(of: lead) { _, newValue in
             appState.crm.updateLead(newValue)
+            if newValue.location.pinReminderEnabled && newValue.location.hasCoordinates {
+                appState.location.startGeofencing(for: appState.crm.leads.filter {
+                    $0.location.pinReminderEnabled && $0.location.hasCoordinates
+                })
+            }
+        }
+    }
+
+    private var dealHealthSection: some View {
+        HStack(spacing: 16) {
+            DealHealthRing(score: lead.dealHealthScore, size: 56)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Deal Health")
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.textPrimary)
+                Text(lead.dealHealthLabel)
+                    .font(.subheadline.bold())
+                    .foregroundStyle(AppTheme.textSecondary)
+                Text("Based on probability, priority, and follow-up timing")
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.textMuted)
+            }
+            Spacer()
+        }
+        .cardStyle()
+    }
+
+    private var dealCoachingSection: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                NavigationLink {
+                    VoiceRoleplaySetupView(
+                        preselectedScenario: DealCoachingService.shared.scenarioForLead(lead),
+                        preselectedPersonality: DealCoachingService.shared.personalityForLead(lead),
+                        practiceLead: lead
+                    )
+                } label: {
+                    Label("Practice This Deal", systemImage: "mic.fill")
+                        .font(.caption.bold())
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(AppTheme.electricBlueBright.opacity(0.15))
+                        .foregroundStyle(AppTheme.electricBlueBright)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    loadPreCallBriefing()
+                } label: {
+                    Label(isLoadingBriefing ? "Loading..." : "Pre-Call Brief", systemImage: "doc.text.fill")
+                        .font(.caption.bold())
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(AppTheme.tealGreen.opacity(0.15))
+                        .foregroundStyle(AppTheme.tealGreen)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+            }
+
+            Button {
+                appState.crm.applySmartFollowUp(to: lead.id)
+                if let updated = appState.crm.leads.first(where: { $0.id == lead.id }) { lead = updated }
+                Haptic.success()
+            } label: {
+                Label("Apply Smart Follow-Up Date", systemImage: "calendar.badge.clock")
+                    .font(.caption.bold())
+            }
+
+            if let preCallBriefing {
+                PreCallBriefingView(lead: lead, briefing: preCallBriefing)
+            }
+        }
+        .cardStyle()
+    }
+
+    private var timelineSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Deal Timeline").font(.headline).foregroundStyle(AppTheme.textPrimary)
+            ForEach(lead.timelineEvents.prefix(8)) { event in
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: event.type.icon).foregroundStyle(AppTheme.electricBlueBright).frame(width: 20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(event.summary).font(.caption).foregroundStyle(AppTheme.textPrimary)
+                        Text(event.date.formatted(date: .abbreviated, time: .shortened)).font(.caption2).foregroundStyle(AppTheme.textMuted)
+                    }
+                }
+            }
+        }
+        .cardStyle()
+    }
+
+    private func loadPreCallBriefing() {
+        isLoadingBriefing = true
+        Task {
+            preCallBriefing = try? await DealCoachingService.shared.generatePreCallBriefing(
+                for: lead,
+                category: appState.auth.currentUser?.salesCategory
+            )
+            isLoadingBriefing = false
         }
     }
 
@@ -47,6 +167,7 @@ struct LeadDetailView: View {
                 .foregroundStyle(AppTheme.textSecondary)
             HStack(spacing: 8) {
                 StageBadge(stage: lead.dealStage)
+                PriorityBadge(priority: lead.priority)
                 Text(lead.leadSource)
                     .font(.caption2)
                     .foregroundStyle(AppTheme.textMuted)
@@ -63,6 +184,12 @@ struct LeadDetailView: View {
             InfoRow(label: "Deal Value", value: "$\(Int(lead.dealValue))")
             InfoRow(label: "Stage", value: lead.dealStage.rawValue)
             InfoRow(label: "Close Probability", value: "\(lead.probabilityOfClosing)%")
+            TextField("Referral source", text: $lead.referralSource).textFieldStyle(AppTextFieldStyle())
+            TextField("Competitor", text: $lead.competitorName).textFieldStyle(AppTextFieldStyle())
+            TextField("Objection tags (comma separated)", text: Binding(
+                get: { lead.objectionTags.joined(separator: ", ") },
+                set: { lead.objectionTags = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
+            )).textFieldStyle(AppTextFieldStyle())
 
             Picker("Stage", selection: $lead.dealStage) {
                 ForEach(DealStage.allCases) { stage in
@@ -71,6 +198,13 @@ struct LeadDetailView: View {
             }
             .pickerStyle(.menu)
             .tint(AppTheme.electricBlue)
+
+            Picker("Priority", selection: $lead.priority) {
+                ForEach(LeadPriority.allCases) { priority in
+                    Text(priority.rawValue).tag(priority)
+                }
+            }
+            .pickerStyle(.segmented)
 
             Slider(value: Binding(
                 get: { Double(lead.probabilityOfClosing) },
@@ -179,6 +313,33 @@ struct LeadDetailView: View {
             isUpdatingAction = false
         }
     }
+
+    private func logQuickContact(type: LeadActivityType, summary: String) {
+        appState.crm.logContact(for: lead.id, type: type, summary: summary)
+        switch type {
+        case .call:
+            appState.teamGoals.recordCall()
+            persistGoals()
+        case .visit:
+            appState.teamGoals.recordVisit()
+            persistGoals()
+        default: break
+        }
+        if let index = appState.crm.leads.firstIndex(where: { $0.id == lead.id }) {
+            lead = appState.crm.leads[index]
+        }
+    }
+
+    private func scheduleFollowUp(days: Int) {
+        let date = Calendar.current.date(byAdding: .day, value: days, to: .now) ?? .now
+        lead.nextFollowUpDate = date
+        appState.crm.scheduleFollowUp(for: lead.id, date: date)
+    }
+
+    private func persistGoals() {
+        guard let userId = appState.auth.currentUser?.id else { return }
+        appState.teamGoals.save(for: userId)
+    }
 }
 
 struct InfoRow: View {
@@ -209,7 +370,9 @@ struct AddLeadView: View {
     @State private var dealValue = ""
     @State private var leadSource = "Manual"
     @State private var notes = ""
+    @State private var contactIntel = ContactIntel()
     @State private var location = LeadLocation()
+    @State private var showDuplicateAlert = false
 
     var body: some View {
         NavigationStack {
@@ -226,6 +389,7 @@ struct AddLeadView: View {
                     }
                     .cardStyle()
 
+                    ContactIntelForm(intel: $contactIntel)
                     LeadLocationSection(location: $location)
                 }
                 .padding()
@@ -241,10 +405,16 @@ struct AddLeadView: View {
                     Button("Save") { saveLead() }.disabled(name.isEmpty)
                 }
             }
+            .alert("Possible Duplicate", isPresented: $showDuplicateAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("A lead with this name or company already exists in your CRM.")
+            }
         }
     }
 
     private func saveLead() {
+        let category = appState.auth.currentUser?.salesCategory
         let lead = Lead(
             ownerId: appState.auth.currentUser?.id ?? "",
             name: name,
@@ -253,10 +423,18 @@ struct AddLeadView: View {
             email: email,
             dealValue: Double(dealValue) ?? 0,
             notes: notes,
-            leadSource: leadSource,
+            leadSource: category?.rawValue ?? leadSource,
+            contactIntel: contactIntel,
             location: location
         )
-        appState.crm.addLead(lead)
-        dismiss()
+        if appState.crm.addLead(lead) {
+            appState.teamGoals.recordNewLead()
+            if let userId = appState.auth.currentUser?.id {
+                appState.teamGoals.save(for: userId)
+            }
+            dismiss()
+        } else {
+            showDuplicateAlert = true
+        }
     }
 }

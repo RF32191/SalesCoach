@@ -61,6 +61,12 @@ final class AuthService {
         UserDefaults.standard.removeObject(forKey: storageKey)
     }
 
+    func updateSalesCategory(_ category: SalesCategory) {
+        guard var user = currentUser else { return }
+        user.salesCategory = category
+        persistUser(user)
+    }
+
     private func persistUser(_ user: UserProfile) {
         currentUser = user
         if let data = try? JSONEncoder().encode(user) {

@@ -24,10 +24,17 @@ final class CRMService {
         notifyGeofencingSync()
     }
 
-    func addLead(_ lead: Lead) {
-        leads.insert(lead, at: 0)
+    func addLead(_ lead: Lead) -> Bool {
+        guard !CRMEnhancements.isDuplicate(lead, in: leads) else { return false }
+        var newLead = lead
+        if newLead.nextFollowUpDate == nil {
+            newLead.nextFollowUpDate = CRMEnhancements.smartFollowUpDate(for: newLead)
+        }
+        newLead.dealEvents.insert(DealEvent(type: .note, summary: "Lead added to CRM"), at: 0)
+        leads.insert(newLead, at: 0)
         saveLeads()
         notifyGeofencingSync()
+        return true
     }
 
     func updateLead(_ lead: Lead) {
@@ -79,8 +86,190 @@ final class CRMService {
         saveLeads()
     }
 
+    func moveLead(_ leadId: String, to stage: DealStage) {
+        guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
+        let previous = leads[index].dealStage
+        leads[index].dealStage = stage
+        leads[index].dealEvents.insert(
+            DealEvent(type: .stageChange, summary: "Moved from \(previous.rawValue) to \(stage.rawValue)"),
+            at: 0
+        )
+        leads[index].updatedAt = .now
+        saveLeads()
+    }
+
+    func updatePriority(for leadId: String, priority: LeadPriority) {
+        guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
+        leads[index].priority = priority
+        leads[index].updatedAt = .now
+        saveLeads()
+    }
+
+    func scheduleFollowUp(for leadId: String, date: Date) {
+        guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
+        leads[index].nextFollowUpDate = date
+        leads[index].updatedAt = .now
+        saveLeads()
+    }
+
+    func logContact(for leadId: String, type: LeadActivityType, summary: String) {
+        guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
+        let activity = LeadActivity(type: type, summary: summary)
+        leads[index].activities.insert(activity, at: 0)
+        leads[index].lastContactedDate = .now
+        leads[index].updatedAt = .now
+        let eventType: DealEventType = switch type {
+        case .call: .call
+        case .email: .email
+        case .visit: .visit
+        case .meeting, .note: .note
+        }
+        leads[index].dealEvents.insert(DealEvent(type: eventType, summary: summary), at: 0)
+        saveLeads()
+    }
+
+    func applySmartFollowUp(to leadId: String) {
+        guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
+        let date = CRMEnhancements.smartFollowUpDate(for: leads[index])
+        leads[index].nextFollowUpDate = date
+        leads[index].dealEvents.insert(
+            DealEvent(type: .followUpScheduled, summary: "Smart follow-up scheduled for \(date.formatted(date: .abbreviated, time: .omitted))"),
+            at: 0
+        )
+        leads[index].updatedAt = .now
+        saveLeads()
+    }
+
+    func exportCSV() -> String {
+        CRMEnhancements.exportCSV(leads: leads)
+    }
+
+    func revenueForecast() -> RevenueForecast {
+        CRMEnhancements.forecast(from: leads)
+    }
+
+    func overdueFollowUps() -> [Lead] {
+        leads
+            .filter { $0.isFollowUpOverdue && $0.dealStage.isActivePipeline }
+            .sorted { ($0.nextFollowUpDate ?? .distantPast) < ($1.nextFollowUpDate ?? .distantPast) }
+    }
+
+    func followUpsToday() -> [Lead] {
+        leads
+            .filter { $0.isFollowUpToday && $0.dealStage.isActivePipeline }
+            .sorted { ($0.nextFollowUpDate ?? .distantFuture) < ($1.nextFollowUpDate ?? .distantFuture) }
+    }
+
+    func upcomingFollowUps(withinDays days: Int = 7) -> [Lead] {
+        let calendar = Calendar.current
+        let end = calendar.date(byAdding: .day, value: days, to: calendar.startOfDay(for: .now))!
+        return leads
+            .filter { lead in
+                guard lead.dealStage.isActivePipeline, let date = lead.nextFollowUpDate else { return false }
+                return date >= calendar.startOfDay(for: .now) && date <= end
+            }
+            .sorted { ($0.nextFollowUpDate ?? .distantFuture) < ($1.nextFollowUpDate ?? .distantFuture) }
+    }
+
+    func hotLeads() -> [Lead] {
+        leads
+            .filter { $0.priority == .hot && $0.dealStage.isActivePipeline }
+            .sorted { $0.dealHealthScore > $1.dealHealthScore }
+    }
+
     func pinnedLeadCount() -> Int {
         leads.filter { $0.location.pinReminderEnabled && $0.location.hasCoordinates }.count
+    }
+
+    func weightedPipelineValue() -> Double {
+        leads
+            .filter { $0.dealStage.isActivePipeline }
+            .reduce(0) { $0 + ($1.dealValue * Double($1.probabilityOfClosing) / 100) }
+    }
+
+    func wonRevenue() -> Double {
+        leads.filter { $0.dealStage == .won }.reduce(0) { $0 + $1.dealValue }
+    }
+
+    func snapshot() -> CRMSnapshot {
+        let calendar = Calendar.current
+        let now = Date()
+        let active = leads.filter { $0.dealStage.isActivePipeline }
+        let won = leads.filter { $0.dealStage == .won }
+        let lost = leads.filter { $0.dealStage == .lost }
+        let closed = won.count + lost.count
+        let winRate = closed > 0 ? Double(won.count) / Double(closed) * 100 : 0
+        let avgDeal = won.isEmpty ? 0 : won.reduce(0) { $0 + $1.dealValue } / Double(won.count)
+
+        let thisMonth = calendar.dateInterval(of: .month, for: now)!
+        let lastMonthStart = calendar.date(byAdding: .month, value: -1, to: thisMonth.start)!
+        let lastMonthEnd = thisMonth.start
+
+        let acquiredThisMonth = leads.filter { thisMonth.contains($0.createdAt) }.count
+        let acquiredLastMonth = leads.filter { $0.createdAt >= lastMonthStart && $0.createdAt < lastMonthEnd }.count
+        let acquisitionTrend = trendPercent(current: acquiredThisMonth, previous: acquiredLastMonth)
+
+        let revenueThisMonth = won.filter { thisMonth.contains($0.updatedAt) }.reduce(0) { $0 + $1.dealValue }
+        let revenueLastMonth = won.filter { $0.updatedAt >= lastMonthStart && $0.updatedAt < lastMonthEnd }.reduce(0) { $0 + $1.dealValue }
+        let revenueTrend = trendPercent(current: Int(revenueThisMonth), previous: Int(revenueLastMonth))
+
+        let monthlyTrends = buildMonthlyTrends(months: 6)
+        let stageMetrics = DealStage.allCases.map { stage in
+            let stageLeads = leads.filter { $0.dealStage == stage }
+            return CRMStageMetric(stage: stage, count: stageLeads.count, value: stageLeads.reduce(0) { $0 + $1.dealValue })
+        }
+
+        let sourceCounts = Dictionary(grouping: leads, by: \.leadSource).map { ($0.key, $0.value.count) }
+        let topSources = sourceCounts
+            .sorted { $0.1 > $1.1 }
+            .prefix(5)
+            .map { CRMSourceMetric(source: $0.0, count: $0.1) }
+
+        return CRMSnapshot(
+            totalClients: leads.count,
+            activeDeals: active.count,
+            wonDeals: won.count,
+            lostDeals: lost.count,
+            pipelineValue: totalPipelineValue(),
+            weightedPipeline: weightedPipelineValue(),
+            wonRevenue: wonRevenue(),
+            winRate: winRate,
+            avgDealSize: avgDeal,
+            acquisitionsThisMonth: acquiredThisMonth,
+            acquisitionTrend: acquisitionTrend,
+            revenueTrend: revenueTrend,
+            monthlyTrends: monthlyTrends,
+            stageMetrics: stageMetrics,
+            topSources: topSources
+        )
+    }
+
+    private func trendPercent(current: Int, previous: Int) -> Double {
+        guard previous > 0 else { return current > 0 ? 100 : 0 }
+        return (Double(current - previous) / Double(previous)) * 100
+    }
+
+    private func buildMonthlyTrends(months: Int) -> [CRMMonthlyPoint] {
+        let calendar = Calendar.current
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM"
+
+        return (0..<months).reversed().compactMap { offset -> CRMMonthlyPoint? in
+            guard let monthStart = calendar.date(byAdding: .month, value: -offset, to: calendar.date(from: calendar.dateComponents([.year, .month], from: .now))!),
+                  let interval = calendar.dateInterval(of: .month, for: monthStart) else { return nil }
+
+            let monthLeads = leads.filter { interval.contains($0.createdAt) }
+            let wonInMonth = leads.filter { $0.dealStage == .won && interval.contains($0.updatedAt) }
+
+            return CRMMonthlyPoint(
+                id: formatter.string(from: monthStart),
+                month: monthStart,
+                label: formatter.string(from: monthStart),
+                acquisitions: monthLeads.count,
+                revenueWon: wonInMonth.reduce(0) { $0 + $1.dealValue },
+                pipelineAdded: monthLeads.reduce(0) { $0 + $1.dealValue }
+            )
+        }
     }
 
     private func saveLeads() {
@@ -108,6 +297,13 @@ final class CRMService {
                 nextFollowUpDate: Calendar.current.date(byAdding: .day, value: 2, to: .now),
                 probabilityOfClosing: 65,
                 aiRecommendedAction: "Send case study from similar SaaS company.",
+                priority: .hot,
+                contactIntel: ContactIntel(
+                    interests: "AI automation, scaling outbound",
+                    likes: "San Francisco Giants, craft coffee",
+                    kidsNames: "Emma (8), Noah (5)",
+                    conversationStarters: "Ask about their Series B hiring push"
+                ),
                 location: LeadLocation(
                     address: "123 Market St",
                     city: "San Francisco, CA",
@@ -130,6 +326,11 @@ final class CRMService {
                 nextFollowUpDate: Calendar.current.date(byAdding: .day, value: 1, to: .now),
                 probabilityOfClosing: 40,
                 aiRecommendedAction: "Follow up with ROI calculator for CFO.",
+                priority: .warm,
+                contactIntel: ContactIntel(
+                    likes: "Local basketball, weekend fishing",
+                    familyNotes: "Wife named Lisa, renovating their home"
+                ),
                 location: LeadLocation(
                     address: "555 Bryant St",
                     city: "San Francisco, CA",
@@ -151,6 +352,7 @@ final class CRMService {
                 nextFollowUpDate: Calendar.current.date(byAdding: .day, value: 3, to: .now),
                 probabilityOfClosing: 80,
                 aiRecommendedAction: "Schedule final contract review call.",
+                priority: .hot,
                 location: LeadLocation(
                     address: "680 Folsom St",
                     city: "San Francisco, CA",

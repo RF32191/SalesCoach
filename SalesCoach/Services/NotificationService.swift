@@ -35,10 +35,20 @@ final class NotificationService {
     }
 
     func notifyProximity(to lead: Lead) {
+        let category = SalesCategory.allCases.first { $0.rawValue == lead.leadSource }
         let content = UNMutableNotificationContent()
-        content.title = "You're near \(lead.name)"
-        let place = lead.location.displayAddress.isEmpty ? lead.company : lead.location.displayAddress
-        content.body = "Pinned location: \(place). Follow up while you're nearby."
+        content.title = "Near \(lead.name)"
+        content.subtitle = lead.company.isEmpty ? (category?.rawValue ?? "Pinned contact") : lead.company
+
+        if lead.contactIntel.hasPersonalDetails {
+            content.body = lead.contactIntel.notificationSnippet
+        } else if !lead.aiRecommendedAction.isEmpty {
+            content.body = lead.aiRecommendedAction
+        } else {
+            let place = lead.location.displayAddress.isEmpty ? lead.company : lead.location.displayAddress
+            content.body = "Pinned location: \(place). Open Sales Coach for your contact briefing."
+        }
+
         content.sound = .default
         content.userInfo = ["leadId": lead.id]
 

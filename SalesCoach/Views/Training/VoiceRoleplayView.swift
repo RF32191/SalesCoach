@@ -15,6 +15,7 @@ struct VoiceRoleplayView: View {
     @State private var showReport = false
     @State private var showVoiceSettings = false
     @State private var lastAIReply = ""
+    @State private var isAwaitingUser = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,14 +34,24 @@ struct VoiceRoleplayView: View {
                         }
 
                         ForEach(appState.training.activeSession?.transcript ?? []) { entry in
-                            TranscriptBubble(entry: entry)
+                            TranscriptBubble(entry: entry, customerLabel: personality.rawValue)
                                 .id(entry.id)
+                        }
+
+                        if appState.voice.isListening,
+                           !appState.voice.transcribedText.isEmpty {
+                            TranscriptBubble(
+                                entry: RoleplayTranscriptEntry(speaker: "You", text: appState.voice.transcribedText),
+                                customerLabel: personality.rawValue,
+                                isLive: true
+                            )
+                            .id("live-user")
                         }
 
                         if appState.training.isProcessing {
                             HStack {
                                 ProgressView().tint(AppTheme.electricBlue)
-                                Text("Customer is responding...")
+                                Text("\(personality.rawValue) is thinking...")
                                     .font(.caption)
                                     .foregroundStyle(AppTheme.textSecondary)
                                 Spacer()
@@ -53,6 +64,9 @@ struct VoiceRoleplayView: View {
                     if let last = appState.training.activeSession?.transcript.last {
                         withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                     }
+                }
+                .onChange(of: appState.voice.transcribedText) {
+                    withAnimation { proxy.scrollTo("live-user", anchor: .bottom) }
                 }
             }
 
@@ -80,10 +94,16 @@ struct VoiceRoleplayView: View {
         .sheet(isPresented: $showVoiceSettings) {
             VoiceSettingsSheet(voice: appState.voice)
         }
-        .onAppear { startSession() }
+        .onAppear {
+            appState.voice.onUtteranceFinished = { text in
+                Task { await processUserMessage(text) }
+            }
+            startSession()
+        }
         .onDisappear {
             timer?.invalidate()
-            appState.voice.stopListening()
+            appState.voice.onUtteranceFinished = nil
+            appState.voice.cancelListening()
             appState.voice.stopSpeaking()
         }
         .navigationDestination(isPresented: $showReport) {
@@ -108,24 +128,24 @@ struct VoiceRoleplayView: View {
             if appState.voice.isListening {
                 HStack(spacing: 6) {
                     Circle().fill(AppTheme.dangerRed).frame(width: 8, height: 8)
-                    Text("Listening to you...")
+                    Text("Listening — pause when done, AI responds automatically")
                         .font(.caption)
                         .foregroundStyle(AppTheme.dangerRed)
                 }
             } else if appState.voice.isSpeaking {
                 HStack(spacing: 6) {
                     Circle().fill(AppTheme.successGreen).frame(width: 8, height: 8)
-                    Text("AI customer speaking...")
+                    Text("\(personality.rawValue) is speaking...")
                         .font(.caption)
                         .foregroundStyle(AppTheme.successGreen)
                 }
-            }
-
-            if !appState.voice.transcribedText.isEmpty && appState.voice.isListening {
-                Text(appState.voice.transcribedText)
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if isAwaitingUser {
+                HStack(spacing: 6) {
+                    Circle().fill(AppTheme.electricBlueBright).frame(width: 8, height: 8)
+                    Text("Your turn — tap mic or start speaking")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.electricBlueBright)
+                }
             }
         }
         .padding()
@@ -141,7 +161,7 @@ struct VoiceRoleplayView: View {
             } else {
                 HStack(spacing: 20) {
                     Button {
-                        Task { await appState.voice.speak(lastAIReply) }
+                        Task { await appState.voice.speak(lastAIReply, force: true) }
                     } label: {
                         Image(systemName: "speaker.wave.2.fill")
                             .font(.title3)
@@ -163,10 +183,10 @@ struct VoiceRoleplayView: View {
 
                     Image(systemName: "waveform")
                         .font(.title3)
-                        .foregroundStyle(appState.voice.settings.autoSpeakResponses ? AppTheme.tealGreen : AppTheme.textMuted)
+                        .foregroundStyle(AppTheme.tealGreen)
                 }
 
-                Text(appState.voice.isListening ? "Tap to send" : "Tap to speak — AI responds aloud")
+                Text(appState.voice.isListening ? "Pause to send · AI replies with voice + text" : "Tap mic to speak")
                     .font(.caption)
                     .foregroundStyle(AppTheme.textSecondary)
             }
@@ -184,16 +204,7 @@ struct VoiceRoleplayView: View {
 
         Task {
             await appState.voice.requestPermissions()
-            if let turn = try? await OpenAIService.shared.roleplayTurn(
-                scenario: scenario,
-                personality: personality,
-                transcript: []
-            ) {
-                appState.training.applyTurnResult(turn)
-                appState.training.addAIMessage(turn.customerReply)
-                lastAIReply = turn.customerReply
-                await appState.voice.speak(turn.customerReply)
-            }
+            await deliverCustomerOpening()
         }
 
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
@@ -201,20 +212,74 @@ struct VoiceRoleplayView: View {
         }
     }
 
+    private func deliverCustomerOpening() async {
+        guard appState.subscription.canUseAI(estimatedTokens: 400) else {
+            appState.training.errorMessage = "AI token limit reached for this month."
+            return
+        }
+
+        if let turn = try? await OpenAIService.shared.roleplayTurn(
+            scenario: scenario,
+            personality: personality,
+            transcript: []
+        ) {
+            await respondAsCustomer(turn.customerReply, applyResult: turn)
+        }
+
+        beginListeningForUser()
+    }
+
+    private func processUserMessage(_ text: String) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            beginListeningForUser()
+            return
+        }
+        guard !appState.training.isProcessing, !appState.voice.isSpeaking else { return }
+
+        guard appState.subscription.canUseAI(estimatedTokens: 300) else {
+            appState.training.errorMessage = "AI token limit reached for this month."
+            return
+        }
+
+        isAwaitingUser = false
+        appState.training.addUserMessage(trimmed)
+
+        if let response = await appState.training.getAIResponse() {
+            await respondAsCustomer(response)
+        }
+
+        beginListeningForUser()
+    }
+
+    private func respondAsCustomer(_ reply: String, applyResult: RoleplayTurnResult? = nil) async {
+        let trimmed = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if let applyResult {
+            appState.training.applyTurnResult(applyResult)
+        }
+
+        appState.training.addAIMessage(trimmed)
+        lastAIReply = trimmed
+        await appState.voice.speak(trimmed, force: true, personality: personality)
+    }
+
+    private func beginListeningForUser() {
+        guard !isEnding, !appState.voice.isSpeaking, !appState.training.isProcessing else { return }
+        isAwaitingUser = true
+        do {
+            try appState.voice.startListening()
+        } catch {
+            appState.training.errorMessage = error.localizedDescription
+        }
+    }
+
     private func toggleListening() {
         if appState.voice.isListening {
-            let text = appState.voice.transcribedText
             appState.voice.stopListening()
-            guard !text.isEmpty else { return }
-            appState.training.addUserMessage(text)
-            Task {
-                if let response = await appState.training.getAIResponse() {
-                    appState.training.addAIMessage(response)
-                    lastAIReply = response
-                    await appState.voice.speak(response)
-                }
-            }
         } else {
+            isAwaitingUser = false
             do {
                 try appState.voice.startListening()
             } catch {
@@ -224,10 +289,11 @@ struct VoiceRoleplayView: View {
     }
 
     private func endSession() {
-        appState.voice.stopListening()
+        appState.voice.cancelListening()
         appState.voice.stopSpeaking()
         timer?.invalidate()
         isEnding = true
+        isAwaitingUser = false
 
         Task {
             scoreReport = await appState.training.completeSession(durationSeconds: elapsedSeconds)
@@ -243,21 +309,29 @@ struct VoiceRoleplayView: View {
 
 struct TranscriptBubble: View {
     let entry: RoleplayTranscriptEntry
+    var customerLabel: String = "Customer"
+    var isLive: Bool = false
+
     var isUser: Bool { entry.speaker == "You" }
+    var speakerLabel: String { isUser ? "You" : customerLabel }
 
     var body: some View {
         HStack {
             if isUser { Spacer(minLength: 40) }
             VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
-                Text(entry.speaker)
+                Text(speakerLabel)
                     .font(.caption2.bold())
                     .foregroundStyle(isUser ? AppTheme.electricBlue : AppTheme.successGreen)
                 Text(entry.text)
                     .font(.subheadline)
                     .foregroundStyle(AppTheme.textPrimary)
                     .padding(12)
-                    .background(isUser ? AppTheme.electricBlue.opacity(0.2) : AppTheme.navyCard)
+                    .background(isUser ? AppTheme.electricBlue.opacity(isLive ? 0.12 : 0.2) : AppTheme.navyCard)
                     .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(isLive ? AppTheme.electricBlue.opacity(0.4) : Color.clear, lineWidth: 1)
+                    )
             }
             if !isUser { Spacer(minLength: 40) }
         }

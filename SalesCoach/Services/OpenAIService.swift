@@ -16,6 +16,7 @@ enum OpenAIError: LocalizedError {
 
 final class OpenAIService {
     static let shared = OpenAIService()
+    var onTokensUsed: ((Int) -> Void)?
     private init() {}
 
     private let coachSystemPrompt = """
@@ -30,7 +31,14 @@ final class OpenAIService {
         ] + messages.map { ["role": $0.role.rawValue, "content": $0.content] }
 
         if AppConfig.isRailwayConfigured {
-            return try await requestRailwayChat(messages: messages)
+            do {
+                return try await requestRailwayChat(messages: messages)
+            } catch {
+                if AppConfig.demoModeEnabled, shouldFallbackToDemo(for: error) {
+                    return demoModeNotice + mockChatResponse(for: messages.last?.content ?? "")
+                }
+                throw error
+            }
         }
         if AppConfig.isOpenAIConfigured {
             return try await requestCompletion(messages: apiMessages)
@@ -58,12 +66,24 @@ final class OpenAIService {
         closingProgress: Int = 0
     ) async throws -> RoleplayTurnResult {
         if AppConfig.isRailwayConfigured {
-            return try await requestRailwayRoleplayTurn(
-                scenario: scenario,
-                personality: personality,
-                transcript: transcript,
-                closingProgress: closingProgress
-            )
+            do {
+                return try await requestRailwayRoleplayTurn(
+                    scenario: scenario,
+                    personality: personality,
+                    transcript: transcript,
+                    closingProgress: closingProgress
+                )
+            } catch {
+                if AppConfig.demoModeEnabled, shouldFallbackToDemo(for: error) {
+                    return demoRoleplayFallback(
+                        scenario: scenario,
+                        personality: personality,
+                        transcript: transcript,
+                        closingProgress: closingProgress
+                    )
+                }
+                throw error
+            }
         }
         if AppConfig.isOpenAIConfigured {
             return try await requestRoleplayTurn(
@@ -372,10 +392,43 @@ final class OpenAIService {
         )
     }
 
+    func synthesizeSpeech(text: String, voice: String, speed: Double, model: String = OpenAITTSModel.hd.rawValue) async throws -> Data {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw OpenAIError.invalidResponse }
+
+        if AppConfig.isRailwayConfigured {
+            let json = try await postRailway(path: "tts", body: [
+                "text": trimmed,
+                "voice": voice,
+                "speed": speed,
+                "model": model
+            ])
+            guard let base64 = json["audioBase64"] as? String,
+                  let data = Data(base64Encoded: base64) else {
+                throw OpenAIError.invalidResponse
+            }
+            recordTokens(from: json, fallbackInput: trimmed)
+            return data
+        }
+
+        throw OpenAIError.notConfigured
+    }
+
+    private func recordTokens(_ count: Int, fallbackInput: String = "", fallbackOutput: String = "") {
+        let tokens = count > 0 ? count : SubscriptionService.estimateTokens(input: fallbackInput, output: fallbackOutput)
+        onTokensUsed?(tokens)
+    }
+
+    private func recordTokens(from json: [String: Any], fallbackInput: String = "", fallbackOutput: String = "") {
+        let count = json["tokensUsed"] as? Int ?? 0
+        recordTokens(count, fallbackInput: fallbackInput, fallbackOutput: fallbackOutput)
+    }
+
     private func requestRailwayChat(messages: [ChatMessage]) async throws -> String {
         let payload: [[String: String]] = messages.map { ["role": $0.role.rawValue, "content": $0.content] }
         let json = try await postRailway(path: "chat", body: ["messages": payload])
         guard let content = json["content"] as? String else { throw OpenAIError.invalidResponse }
+        recordTokens(from: json, fallbackInput: messages.map(\.content).joined(), fallbackOutput: content)
         return content
     }
 
@@ -395,6 +448,7 @@ final class OpenAIService {
         ])
 
         guard let reply = json["customerReply"] as? String else { throw OpenAIError.invalidResponse }
+        recordTokens(from: json, fallbackOutput: reply)
         let delta = json["closingProgressDelta"] as? Int ?? 0
         let suggestion = json["suggestion"] as? String ?? "Listen actively and ask a follow-up question."
 
@@ -419,6 +473,7 @@ final class OpenAIService {
 
         guard let data = try? JSONSerialization.data(withJSONObject: json),
               let raw = String(data: data, encoding: .utf8) else { return nil }
+        recordTokens(from: json)
         return parseScoreReport(from: raw)
     }
 
@@ -429,6 +484,7 @@ final class OpenAIService {
             "lead": leadData
         ])
         guard let content = json["content"] as? String else { throw OpenAIError.invalidResponse }
+        recordTokens(from: json, fallbackOutput: content)
         return content
     }
 
@@ -436,7 +492,100 @@ final class OpenAIService {
         let leadData = try encodeLead(lead)
         let json = try await postRailway(path: "crm/next-action", body: ["lead": leadData])
         guard let content = json["content"] as? String else { throw OpenAIError.invalidResponse }
+        recordTokens(from: json, fallbackOutput: content)
         return content
+    }
+
+    func requestPreCallBriefing(lead: Lead, category: SalesCategory?) async throws -> PreCallBriefing {
+        let leadData = try encodeLead(lead)
+        if AppConfig.isRailwayConfigured {
+            let json = try await postRailway(path: "crm/pre-call-briefing", body: [
+                "lead": leadData,
+                "category": category?.rawValue ?? lead.leadSource
+            ])
+            return parsePreCallBriefing(json)
+        }
+        let prompt = "Generate a pre-call briefing JSON for lead \(lead.name) at \(lead.company). Keys: openingLine, keyPoints[], questionsToAsk[], closeLine, personalHooks[]"
+        let response = try await requestCompletion(messages: [
+            ["role": "system", "content": "Return valid JSON only."],
+            ["role": "user", "content": prompt]
+        ])
+        return parsePreCallBriefingJSON(response) ?? PreCallBriefing(
+            openingLine: "Hi \(lead.name), thanks for taking my call.",
+            keyPoints: [lead.aiRecommendedAction],
+            questionsToAsk: ["What's your timeline?"],
+            closeLine: "Can we schedule next steps?",
+            personalHooks: lead.contactIntel.briefingFacts.map { $0.value }
+        )
+    }
+
+    func requestPostVisitDebrief(lead: Lead, visitNotes: String) async throws -> PostVisitDebrief {
+        let leadData = try encodeLead(lead)
+        if AppConfig.isRailwayConfigured {
+            let json = try await postRailway(path: "crm/post-visit-debrief", body: [
+                "lead": leadData,
+                "visitNotes": visitNotes
+            ])
+            return parsePostVisitDebrief(json)
+        }
+        return PostVisitDebrief(
+            whatWentWell: ["Engaged the contact", "Confirmed next steps"],
+            improvements: ["Ask more discovery questions"],
+            nextStep: lead.aiRecommendedAction,
+            practicePrompt: "Practice objection handling for \(lead.company)"
+        )
+    }
+
+    func analyzeCallTranscript(_ transcript: String) async throws -> CallAnalysisResult {
+        if AppConfig.isRailwayConfigured {
+            let json = try await postRailway(path: "training/analyze-call", body: ["transcript": transcript])
+            return parseCallAnalysis(json)
+        }
+        return CallAnalysisResult(
+            talkRatioPercent: 58,
+            questionsAsked: transcript.filter { $0 == "?" }.count,
+            fillerWordCount: 3,
+            overallScore: 74,
+            strengths: ["Professional tone"],
+            improvements: ["Ask more open questions"]
+        )
+    }
+
+    private func parsePreCallBriefing(_ json: [String: Any]) -> PreCallBriefing {
+        PreCallBriefing(
+            openingLine: json["openingLine"] as? String ?? "",
+            keyPoints: json["keyPoints"] as? [String] ?? [],
+            questionsToAsk: json["questionsToAsk"] as? [String] ?? [],
+            closeLine: json["closeLine"] as? String ?? "",
+            personalHooks: json["personalHooks"] as? [String] ?? []
+        )
+    }
+
+    private func parsePreCallBriefingJSON(_ json: String) -> PreCallBriefing? {
+        let cleaned = json.replacingOccurrences(of: "```json", with: "").replacingOccurrences(of: "```", with: "")
+        guard let data = cleaned.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return parsePreCallBriefing(dict)
+    }
+
+    private func parsePostVisitDebrief(_ json: [String: Any]) -> PostVisitDebrief {
+        PostVisitDebrief(
+            whatWentWell: json["whatWentWell"] as? [String] ?? [],
+            improvements: json["improvements"] as? [String] ?? [],
+            nextStep: json["nextStep"] as? String ?? "",
+            practicePrompt: json["practicePrompt"] as? String ?? ""
+        )
+    }
+
+    private func parseCallAnalysis(_ json: [String: Any]) -> CallAnalysisResult {
+        CallAnalysisResult(
+            talkRatioPercent: json["talkRatioPercent"] as? Int ?? 50,
+            questionsAsked: json["questionsAsked"] as? Int ?? 0,
+            fillerWordCount: json["fillerWordCount"] as? Int ?? 0,
+            overallScore: json["overallScore"] as? Int ?? 70,
+            strengths: json["strengths"] as? [String] ?? [],
+            improvements: json["improvements"] as? [String] ?? []
+        )
     }
 
     private func encodeLead(_ lead: Lead) throws -> [String: Any] {
@@ -465,8 +614,7 @@ final class OpenAIService {
         guard let http = response as? HTTPURLResponse else { throw OpenAIError.invalidResponse }
 
         if http.statusCode >= 400 {
-            let message = String(data: data, encoding: .utf8) ?? "API error"
-            throw OpenAIError.apiError(message)
+            throw OpenAIError.apiError(parseAPIErrorMessage(data: data, statusCode: http.statusCode))
         }
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -496,8 +644,7 @@ final class OpenAIService {
         guard let http = response as? HTTPURLResponse else { throw OpenAIError.invalidResponse }
 
         if http.statusCode >= 400 {
-            let message = String(data: data, encoding: .utf8) ?? "API error"
-            throw OpenAIError.apiError(message)
+            throw OpenAIError.apiError(parseAPIErrorMessage(data: data, statusCode: http.statusCode))
         }
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -507,7 +654,83 @@ final class OpenAIService {
             throw OpenAIError.invalidResponse
         }
 
+        let inputText = messages.compactMap { $0["content"] }.joined()
+        if let usage = json["usage"] as? [String: Any],
+           let total = usage["total_tokens"] as? Int {
+            recordTokens(total, fallbackInput: inputText, fallbackOutput: content)
+        } else {
+            recordTokens(0, fallbackInput: inputText, fallbackOutput: content)
+        }
+
         return content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var demoModeNotice: String {
+        "⚠️ Live AI is offline — showing demo coaching. Set a valid OPENAI_API_KEY on Railway.\n\n"
+    }
+
+    private func shouldFallbackToDemo(for error: Error) -> Bool {
+        guard case OpenAIError.apiError(let message) = error else { return false }
+        let lower = message.lowercased()
+        return lower.contains("incorrect api key")
+            || lower.contains("openai api key")
+            || lower.contains("openai_key_invalid")
+            || lower.contains("unauthorized")
+            || lower.contains("not configured")
+            || lower.contains("live ai is offline")
+    }
+
+    private func demoRoleplayFallback(
+        scenario: TrainingScenario,
+        personality: CustomerPersonality,
+        transcript: [RoleplayTranscriptEntry],
+        closingProgress: Int
+    ) -> RoleplayTurnResult {
+        let reply = mockRoleplayResponse(
+            scenario: scenario,
+            personality: personality,
+            turn: transcript.count
+        )
+        let delta = estimateClosingDelta(
+            scenario: scenario,
+            personality: personality,
+            transcript: transcript,
+            closingProgress: closingProgress
+        )
+        let suggestion = mockSuggestion(
+            scenario: scenario,
+            personality: personality,
+            closingProgress: closingProgress + delta,
+            transcript: transcript
+        )
+        return RoleplayTurnResult(
+            customerReply: reply,
+            closingProgressDelta: delta,
+            suggestion: suggestion
+        )
+    }
+
+    private func parseAPIErrorMessage(data: Data, statusCode: Int) -> String {
+        let raw = String(data: data, encoding: .utf8) ?? "API error"
+
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let error = json["error"] as? String {
+            if error.contains("Incorrect API key") || error.contains("OPENAI") {
+                return "Railway OpenAI key is invalid. In Railway → Variables, set OPENAI_API_KEY to a real key from platform.openai.com/api-keys."
+            }
+            if statusCode == 401 && error == "Unauthorized" {
+                return "Railway API key mismatch. Match LocalSecrets.railwayAPIKey with Railway API_SECRET."
+            }
+            return error
+        }
+
+        if raw.contains("Incorrect API key") {
+            return "Railway OpenAI key is invalid. Update OPENAI_API_KEY in Railway variables."
+        }
+        if statusCode == 401 {
+            return "Railway API key mismatch. Update LocalSecrets.railwayAPIKey to match Railway API_SECRET."
+        }
+        return raw
     }
 
     private func parseScoreReport(from json: String) -> TrainingScoreReport? {

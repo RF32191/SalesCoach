@@ -1,9 +1,20 @@
 import SwiftUI
 
 struct TrainingHubView: View {
+    var showNavigationChrome: Bool = true
+
     var body: some View {
-        NavigationStack {
-            ScrollView {
+        Group {
+            if showNavigationChrome {
+                NavigationStack { trainingContent }
+            } else {
+                trainingContent
+            }
+        }
+    }
+
+    private var trainingContent: some View {
+        ScrollView {
                 VStack(spacing: 20) {
                     NavigationLink {
                         VoiceRoleplaySetupView()
@@ -39,6 +50,18 @@ struct TrainingHubView: View {
                             }
                         }
                     }
+
+                    NavigationLink {
+                        UltimateSalesHubView()
+                    } label: {
+                        FeatureCard(
+                            title: "Ultimate Training Toolkit",
+                            subtitle: "Certifications, battle mode, call analysis, and skill gaps",
+                            icon: "star.circle.fill",
+                            accentColor: AppTheme.warningOrange
+                        )
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding()
             }
@@ -47,7 +70,6 @@ struct TrainingHubView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
             #endif
-        }
     }
 }
 

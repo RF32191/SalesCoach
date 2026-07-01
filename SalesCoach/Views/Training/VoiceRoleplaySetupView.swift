@@ -5,6 +5,8 @@ struct VoiceRoleplaySetupView: View {
     @Environment(\.dismiss) private var dismiss
 
     var preselectedScenario: TrainingScenario?
+    var preselectedPersonality: CustomerPersonality?
+    var practiceLead: Lead?
     @State private var selectedScenario: TrainingScenario = .coldCall
     @State private var selectedPersonality: CustomerPersonality = .interested
     @State private var startSession = false
@@ -22,6 +24,19 @@ struct VoiceRoleplaySetupView: View {
                     Text("Choose a scenario and customer personality")
                         .font(.subheadline)
                         .foregroundStyle(AppTheme.textSecondary)
+                }
+
+                if let practiceLead {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Practicing for: \(practiceLead.company.isEmpty ? practiceLead.name : practiceLead.company)")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(AppTheme.tealGreen)
+                        Text("Scenario and personality are tuned to this deal.")
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .cardStyle()
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
@@ -58,11 +73,11 @@ struct VoiceRoleplaySetupView: View {
                     }
                 }
 
-                if !appState.subscription.canStartRoleplay() {
+                if !appState.subscription.canStartRoleplay() || !appState.subscription.canUseAI() {
                     HStack {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(AppTheme.warningOrange)
-                        Text("You've used all roleplays this month. Upgrade to Pro for more.")
+                        Text("Roleplay or AI token limit reached this month. Upgrade for more.")
                             .font(.caption)
                             .foregroundStyle(AppTheme.textSecondary)
                     }
@@ -72,7 +87,7 @@ struct VoiceRoleplaySetupView: View {
                 PrimaryButton(
                     title: "Start Roleplay",
                     icon: "mic.fill",
-                    isDisabled: !appState.subscription.canStartRoleplay()
+                    isDisabled: !appState.subscription.canStartRoleplay() || !appState.subscription.canUseAI()
                 ) {
                     appState.subscription.recordRoleplay()
                     startSession = true
@@ -88,6 +103,13 @@ struct VoiceRoleplaySetupView: View {
         .onAppear {
             if let preselected = preselectedScenario {
                 selectedScenario = preselected
+            } else if let lead = practiceLead {
+                selectedScenario = DealCoachingService.shared.scenarioForLead(lead)
+            }
+            if let personality = preselectedPersonality {
+                selectedPersonality = personality
+            } else if let lead = practiceLead {
+                selectedPersonality = DealCoachingService.shared.personalityForLead(lead)
             }
         }
         .navigationDestination(isPresented: $startSession) {

@@ -24,6 +24,22 @@ enum DealStage: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum LeadPriority: String, Codable, CaseIterable, Identifiable {
+    case hot = "Hot"
+    case warm = "Warm"
+    case cold = "Cold"
+
+    var id: String { rawValue }
+
+    var sortOrder: Int {
+        switch self {
+        case .hot: 0
+        case .warm: 1
+        case .cold: 2
+        }
+    }
+}
+
 struct Lead: Codable, Identifiable, Equatable {
     var id: String
     var ownerId: String
@@ -39,6 +55,14 @@ struct Lead: Codable, Identifiable, Equatable {
     var probabilityOfClosing: Int
     var aiRecommendedAction: String
     var leadSource: String
+    var priority: LeadPriority
+    var tags: [String]
+    var contactIntel: ContactIntel
+    var referralSource: String
+    var competitorName: String
+    var objectionTags: [String]
+    var lostReason: String
+    var dealEvents: [DealEvent]
     var location: LeadLocation
     var activities: [LeadActivity]
     var createdAt: Date
@@ -59,6 +83,14 @@ struct Lead: Codable, Identifiable, Equatable {
         probabilityOfClosing: Int = 20,
         aiRecommendedAction: String = "Send an introductory email to establish rapport.",
         leadSource: String = "Manual",
+        priority: LeadPriority = .warm,
+        tags: [String] = [],
+        contactIntel: ContactIntel = ContactIntel(),
+        referralSource: String = "",
+        competitorName: String = "",
+        objectionTags: [String] = [],
+        lostReason: String = "",
+        dealEvents: [DealEvent] = [],
         location: LeadLocation = LeadLocation(),
         activities: [LeadActivity] = [],
         createdAt: Date = .now,
@@ -78,6 +110,14 @@ struct Lead: Codable, Identifiable, Equatable {
         self.probabilityOfClosing = probabilityOfClosing
         self.aiRecommendedAction = aiRecommendedAction
         self.leadSource = leadSource
+        self.priority = priority
+        self.tags = tags
+        self.contactIntel = contactIntel
+        self.referralSource = referralSource
+        self.competitorName = competitorName
+        self.objectionTags = objectionTags
+        self.lostReason = lostReason
+        self.dealEvents = dealEvents
         self.location = location
         self.activities = activities
         self.createdAt = createdAt
@@ -87,7 +127,7 @@ struct Lead: Codable, Identifiable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, ownerId, name, company, phone, email, dealValue, dealStage, notes
         case lastContactedDate, nextFollowUpDate, probabilityOfClosing, aiRecommendedAction
-        case leadSource, location, activities, createdAt, updatedAt
+        case leadSource, priority, tags, contactIntel, referralSource, competitorName, objectionTags, lostReason, dealEvents, location, activities, createdAt, updatedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -107,9 +147,34 @@ struct Lead: Codable, Identifiable, Equatable {
         aiRecommendedAction = try container.decodeIfPresent(String.self, forKey: .aiRecommendedAction)
             ?? "Send an introductory email to establish rapport."
         leadSource = try container.decodeIfPresent(String.self, forKey: .leadSource) ?? "Manual"
+        priority = try container.decodeIfPresent(LeadPriority.self, forKey: .priority) ?? .warm
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        contactIntel = try container.decodeIfPresent(ContactIntel.self, forKey: .contactIntel) ?? ContactIntel()
+        referralSource = try container.decodeIfPresent(String.self, forKey: .referralSource) ?? ""
+        competitorName = try container.decodeIfPresent(String.self, forKey: .competitorName) ?? ""
+        objectionTags = try container.decodeIfPresent([String].self, forKey: .objectionTags) ?? []
+        lostReason = try container.decodeIfPresent(String.self, forKey: .lostReason) ?? ""
+        dealEvents = try container.decodeIfPresent([DealEvent].self, forKey: .dealEvents) ?? []
         location = try container.decodeIfPresent(LeadLocation.self, forKey: .location) ?? LeadLocation()
         activities = try container.decodeIfPresent([LeadActivity].self, forKey: .activities) ?? []
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
+    }
+
+    var timelineEvents: [DealEvent] {
+        let activityEvents = activities.map { activity in
+            DealEvent(type: Self.eventType(for: activity.type), summary: activity.summary, date: activity.date)
+        }
+        return (dealEvents + activityEvents).sorted { $0.date > $1.date }
+    }
+
+    private static func eventType(for type: LeadActivityType) -> DealEventType {
+        switch type {
+        case .call: return .call
+        case .email: return .email
+        case .meeting: return .note
+        case .visit: return .visit
+        case .note: return .note
+        }
     }
 }

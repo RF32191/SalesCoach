@@ -8,7 +8,11 @@ struct RootView: View {
         ZStack {
             Group {
                 if appState.auth.isAuthenticated {
-                    MainTabView()
+                    if appState.auth.currentUser?.hasSelectedSalesCategory == true {
+                        MainTabView()
+                    } else {
+                        SalesTeamSetupView()
+                    }
                 } else {
                     AuthView()
                 }

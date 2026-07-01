@@ -2,26 +2,54 @@ import SwiftUI
 
 struct ChatView: View {
     @Environment(AppState.self) private var appState
+    var embedded: Bool = false
+
     @State private var messageText = ""
     @State private var showHistory = false
+    @State private var showLimitAlert = false
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                if showHistory {
-                    conversationHistory
-                } else {
-                    chatMessages
-                }
-
-                inputBar
+        Group {
+            if embedded {
+                chatContent
+            } else {
+                NavigationStack { chatContent }
             }
-            .appBackground()
-            .navigationTitle("AI Sales Coach")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
+        }
+    }
+
+    private var chatContent: some View {
+        VStack(spacing: 0) {
+            if showHistory {
+                conversationHistory
+            } else {
+                chatMessages
+            }
+
+            if let error = appState.chat.errorMessage {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.dangerRed)
+                    .padding(.horizontal)
+            }
+
+            if !AppConfig.isAIConfigured {
+                Text("Connect Railway AI in Xcode scheme env vars for live coaching.")
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.warningOrange)
+                    .padding(.horizontal)
+                    .padding(.top, 4)
+            }
+
+            inputBar
+        }
+        .appBackground()
+        .navigationTitle("AI Sales Coach")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .toolbar {
+            if !embedded {
                 ToolbarItem(placement: .platformLeading) {
                     Button {
                         showHistory.toggle()
@@ -29,15 +57,20 @@ struct ChatView: View {
                         Image(systemName: showHistory ? "bubble.left.fill" : "clock.arrow.circlepath")
                     }
                 }
-                ToolbarItem(placement: .platformTrailing) {
-                    Button {
-                        appState.chat.startNewConversation(userId: appState.auth.currentUser?.id ?? "")
-                        showHistory = false
-                    } label: {
-                        Image(systemName: "square.and.pencil")
-                    }
+            }
+            ToolbarItem(placement: embedded ? .topBarTrailing : .platformTrailing) {
+                Button {
+                    appState.chat.startNewConversation(userId: appState.auth.currentUser?.id ?? "")
+                    showHistory = false
+                } label: {
+                    Image(systemName: "square.and.pencil")
                 }
             }
+        }
+        .alert("Usage Limit Reached", isPresented: $showLimitAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("You've used your AI tokens or chat limit for this month. Upgrade your plan for more.")
         }
     }
 
@@ -152,12 +185,22 @@ struct ChatView: View {
     }
 
     private func send(_ text: String) {
-        guard appState.subscription.canSendChat() else { return }
-        let content = text
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        guard appState.subscription.canSendChat() else {
+            showLimitAlert = true
+            return
+        }
+        guard appState.subscription.canUseAI(estimatedTokens: SubscriptionService.estimateTokens(input: trimmed)) else {
+            showLimitAlert = true
+            return
+        }
+
         messageText = ""
         appState.subscription.recordChatMessage()
         Task {
-            await appState.chat.sendMessage(content, userId: appState.auth.currentUser?.id ?? "")
+            await appState.chat.sendMessage(trimmed, userId: appState.auth.currentUser?.id ?? "")
         }
     }
 }
