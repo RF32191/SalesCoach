@@ -101,6 +101,13 @@ struct CompanyDiscoveryView: View {
 
     private var discoveryControls: some View {
         VStack(spacing: 14) {
+            CRMGradientHeader(
+                title: "Discover \(selectedCategory.rawValue)",
+                subtitle: "Category-matched businesses near your GPS lock",
+                icon: selectedCategory.icon,
+                accent: selectedCategory.accentColor
+            )
+
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Label("Location Locked", systemImage: "location.fill")
@@ -220,7 +227,10 @@ struct CompanyDiscoveryView: View {
             }
         }
         .padding()
-        .background(AppTheme.elevatedBackground(for: colorScheme))
+        .background(
+            RoundedRectangle(cornerRadius: 0)
+                .fill(AppTheme.elevatedBackground(for: colorScheme).opacity(0.55))
+        )
     }
 
     private var notableTargetsSection: some View {
@@ -497,14 +507,20 @@ struct ProspectLockSheet: View {
             Form {
                 Section {
                     HStack(spacing: 12) {
-                        Image(systemName: prospect.category.icon)
-                            .foregroundStyle(prospect.category.accentColor)
-                            .frame(width: 36, height: 36)
-                            .background(prospect.category.accentColor.opacity(0.15))
-                            .clipShape(Circle())
-                        VStack(alignment: .leading) {
+                        ZStack {
+                            Circle()
+                                .fill(prospect.category.accentColor.opacity(0.18))
+                                .frame(width: 52, height: 52)
+                            Image(systemName: prospect.category.icon)
+                                .font(.title3)
+                                .foregroundStyle(prospect.category.accentColor)
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(prospect.name).font(.headline)
-                            Text(prospect.category.rawValue).font(.caption).foregroundStyle(.secondary)
+                            Text(prospect.category.rawValue).font(.caption).foregroundStyle(prospect.category.accentColor)
+                            if let distance = prospect.distanceLabel {
+                                Text(distance).font(.caption2).foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
@@ -554,6 +570,8 @@ struct ProspectLockSheet: View {
                     )
                 }
             }
+            .scrollContentBackground(.hidden)
+            .appBackground()
             .navigationTitle("Add to CRM")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

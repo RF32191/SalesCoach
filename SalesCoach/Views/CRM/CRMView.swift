@@ -55,14 +55,14 @@ struct CRMView: View {
             case .tasks:
                 CRMTasksView()
             case .map:
-                VStack(spacing: 12) {
+                VStack(spacing: 14) {
                     NavigationLink {
-                        CompanyDiscoveryView()
+                        CompanyDiscoveryView(initialCategory: appState.auth.currentUser?.salesCategory)
                     } label: {
                         FeatureCard(
-                            title: "Find New Companies",
-                            subtitle: "Search by category and geo-lock your location",
-                            icon: "location.magnifyingglass",
+                            title: "Find Category Targets",
+                            subtitle: "Discover businesses matched to your sales vertical",
+                            icon: "sparkle.magnifyingglass",
                             accentColor: AppTheme.tealGreen
                         )
                     }
@@ -71,6 +71,7 @@ struct CRMView: View {
 
                     CRMMapView()
                         .padding(.horizontal)
+                        .frame(minHeight: 420)
                 }
             case .list:
                 listContent

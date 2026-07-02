@@ -241,68 +241,83 @@ struct CallAnalysisView: View {
 struct RoutePlannerView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
+    @State private var etaLabels: [String: String] = [:]
 
     private var stops: [RouteStop] {
         RoutePlannerService.planRoute(from: appState.location.currentCoordinate, leads: appState.crm.leads)
     }
 
+    private var totalPipeline: Double {
+        stops.reduce(0) { $0 + $1.lead.dealValue }
+    }
+
     var body: some View {
-        ScrollView {
-            VStack(spacing: 12) {
-                if let hint = appState.auth.currentUser?.salesCategory {
-                    Text(CRMEnhancements.businessHoursHint(for: hint))
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.secondaryText(for: colorScheme))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .cardStyle()
-                }
-                ForEach(stops) { stop in
-                    VStack(spacing: 8) {
-                        NavigationLink { LeadDetailView(lead: stop.lead) } label: {
-                            HStack(spacing: 12) {
-                                Text("\(stop.order)").font(.headline.bold()).foregroundStyle(AppTheme.tealGreen).frame(width: 28)
-                                VStack(alignment: .leading) {
-                                    Text(stop.lead.company.isEmpty ? stop.lead.name : stop.lead.company).font(.subheadline.bold())
-                                    Text(stop.lead.aiRecommendedAction).font(.caption).lineLimit(2)
-                                }
-                                Spacer()
-                                if let d = stop.distanceLabel { Text(d).font(.caption2) }
-                            }
-                            .padding(12)
-                            .background(AppTheme.cardBackground(for: colorScheme))
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                        }
-                        .buttonStyle(.plain)
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 18) {
+                CRMGradientHeader(
+                    title: "Today's Field Route",
+                    subtitle: "Optimized visit order by priority, follow-ups, and distance",
+                    icon: "map.fill",
+                    accent: AppTheme.tealGreen
+                )
 
-                        if stop.lead.location.hasCoordinates {
-                            AppleMapsNavigateButton(
-                                title: "Navigate in Apple Maps",
-                                name: stop.lead.company.isEmpty ? stop.lead.name : stop.lead.company,
-                                latitude: stop.lead.location.latitude ?? 0,
-                                longitude: stop.lead.location.longitude ?? 0,
-                                origin: appState.location.currentCoordinate,
-                                style: .compact
-                            )
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 12)
-                        }
-                    }
-                }
+                GlassMapToolbar(items: [
+                    (icon: "mappin.and.ellipse", label: "Stops", value: "\(stops.count)", color: AppTheme.tealGreen),
+                    (icon: "dollarsign.circle.fill", label: "Pipeline", value: formatCurrency(totalPipeline), color: AppTheme.successGreen),
+                    (icon: "car.fill", label: "Mode", value: "Driving", color: AppTheme.electricBlueBright)
+                ])
 
-                if let first = stops.first, first.lead.location.hasCoordinates {
-                    AppleMapsNavigateButton(
-                        title: "Start Route — Stop 1",
-                        name: first.lead.company.isEmpty ? first.lead.name : first.lead.company,
-                        latitude: first.lead.location.latitude ?? 0,
-                        longitude: first.lead.location.longitude ?? 0,
-                        origin: appState.location.currentCoordinate
+                if !stops.isEmpty {
+                    MultiStopRouteButton(
+                        stopCount: stops.count,
+                        origin: appState.location.currentCoordinate,
+                        stops: stops
                     )
+                }
+
+                if let hint = appState.auth.currentUser?.salesCategory {
+                    HStack(spacing: 10) {
+                        Image(systemName: hint.icon)
+                            .foregroundStyle(hint.accentColor)
+                        Text(CRMEnhancements.businessHoursHint(for: hint))
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.secondaryText(for: colorScheme))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(AppTheme.cardBackground(for: colorScheme))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+
+                if stops.isEmpty {
+                    EmptyStateView(
+                        icon: "map",
+                        title: "No routed stops yet",
+                        message: "Pin client locations with GPS to build an optimized multi-stop route."
+                    )
+                } else {
+                    ForEach(Array(stops.enumerated()), id: \.element.id) { index, stop in
+                        RouteStopCard(
+                            stop: stop,
+                            etaLabel: etaLabels[stop.id],
+                            origin: appState.location.currentCoordinate,
+                            isLast: index == stops.count - 1
+                        )
+                    }
                 }
             }
             .padding()
         }
         .appBackground()
         .navigationTitle("Route Planner")
+        .task(id: stops.map(\.id)) {
+            etaLabels = await MapDirectionsService.loadETAs(for: stops, from: appState.location.currentCoordinate)
+        }
+    }
+
+    private func formatCurrency(_ value: Double) -> String {
+        if value >= 1000 { return String(format: "$%.0fK", value / 1000) }
+        return "$\(Int(value))"
     }
 }
 

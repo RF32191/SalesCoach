@@ -33,21 +33,23 @@ struct FeatureCard: View {
     var accentColor: Color = AppTheme.electricBlueBright
 
     var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: icon)
-                .font(.title2)
-                .foregroundStyle(accentColor)
-                .frame(width: 44, height: 44)
-                .background(
-                    LinearGradient(
-                        colors: [accentColor.opacity(0.22), accentColor.opacity(0.08)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+        HStack(spacing: 16) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(
+                        LinearGradient(
+                            colors: [accentColor.opacity(0.28), accentColor.opacity(0.08)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .frame(width: 52, height: 52)
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundStyle(accentColor)
+            }
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(title)
                     .font(.headline)
                     .foregroundStyle(AppTheme.primaryText(for: colorScheme))
@@ -55,13 +57,17 @@ struct FeatureCard: View {
                     .font(.caption)
                     .foregroundStyle(AppTheme.secondaryText(for: colorScheme))
                     .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Image(systemName: "chevron.right")
                 .font(.caption.bold())
-                .foregroundStyle(AppTheme.electricBlueBright.opacity(0.8))
+                .foregroundStyle(.white.opacity(0.35))
+                .padding(8)
+                .background(accentColor.opacity(0.15))
+                .clipShape(Circle())
         }
         .cardStyle()
     }
@@ -74,14 +80,17 @@ struct SectionHeader: View {
     var actionTitle: String = "See All"
 
     var body: some View {
-        HStack {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(AppTheme.brandGradient)
+                .frame(width: 4, height: 18)
             Text(title)
                 .font(.headline)
                 .foregroundStyle(AppTheme.primaryText(for: colorScheme))
             Spacer()
             if let action {
                 Button(actionTitle, action: action)
-                    .font(.subheadline.bold())
+                    .font(.caption.bold())
                     .foregroundStyle(AppTheme.electricBlueBright)
             }
         }

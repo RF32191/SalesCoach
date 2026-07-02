@@ -25,6 +25,7 @@ enum DiscoveryRadius: Int, CaseIterable, Identifiable {
 @Observable
 final class ProspectDiscoveryService {
     var results: [DiscoveredProspect] = []
+    var mapOverlayResults: [DiscoveredProspect] = []
     var isSearching = false
     var errorMessage: String?
     var selectedCategory: SalesCategory?
@@ -183,8 +184,39 @@ final class ProspectDiscoveryService {
         )
     }
 
+    func loadMapOverlay(
+        category: SalesCategory,
+        near coordinate: CLLocationCoordinate2D,
+        radius: DiscoveryRadius = .threeMiles
+    ) async {
+        var combined: [DiscoveredProspect] = []
+        for query in category.searchQueries.prefix(3) {
+            combined.append(contentsOf: await performSearch(
+                query: query,
+                category: category,
+                companyQuery: "",
+                coordinate: coordinate,
+                radiusMeters: radius.meters
+            ))
+        }
+        combined.append(contentsOf: await searchByPOICategories(
+            category: category,
+            coordinate: coordinate,
+            radiusMeters: radius.meters
+        ))
+
+        mapOverlayResults = Array(
+            combined
+                .uniqued(by: \.id)
+                .filter { ($0.distanceMeters ?? .infinity) <= radius.meters }
+                .sorted { ($0.distanceMeters ?? .infinity) < ($1.distanceMeters ?? .infinity) }
+                .prefix(20)
+        )
+    }
+
     func clearResults() {
         results = []
+        mapOverlayResults = []
         selectedCategory = nil
         lastSearchCoordinate = nil
         lastSearchLabel = ""
