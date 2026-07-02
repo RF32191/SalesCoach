@@ -57,6 +57,9 @@ struct Lead: Codable, Identifiable, Equatable {
     var leadSource: String
     var priority: LeadPriority
     var tags: [String]
+    var contactRole: ContactRole
+    var isFavorite: Bool
+    var expectedCloseDate: Date?
     var contactIntel: ContactIntel
     var referralSource: String
     var competitorName: String
@@ -85,6 +88,9 @@ struct Lead: Codable, Identifiable, Equatable {
         leadSource: String = "Manual",
         priority: LeadPriority = .warm,
         tags: [String] = [],
+        contactRole: ContactRole = .decisionMaker,
+        isFavorite: Bool = false,
+        expectedCloseDate: Date? = nil,
         contactIntel: ContactIntel = ContactIntel(),
         referralSource: String = "",
         competitorName: String = "",
@@ -112,6 +118,9 @@ struct Lead: Codable, Identifiable, Equatable {
         self.leadSource = leadSource
         self.priority = priority
         self.tags = tags
+        self.contactRole = contactRole
+        self.isFavorite = isFavorite
+        self.expectedCloseDate = expectedCloseDate
         self.contactIntel = contactIntel
         self.referralSource = referralSource
         self.competitorName = competitorName
@@ -127,7 +136,7 @@ struct Lead: Codable, Identifiable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, ownerId, name, company, phone, email, dealValue, dealStage, notes
         case lastContactedDate, nextFollowUpDate, probabilityOfClosing, aiRecommendedAction
-        case leadSource, priority, tags, contactIntel, referralSource, competitorName, objectionTags, lostReason, dealEvents, location, activities, createdAt, updatedAt
+        case leadSource, priority, tags, contactRole, isFavorite, expectedCloseDate, contactIntel, referralSource, competitorName, objectionTags, lostReason, dealEvents, location, activities, createdAt, updatedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -149,6 +158,9 @@ struct Lead: Codable, Identifiable, Equatable {
         leadSource = try container.decodeIfPresent(String.self, forKey: .leadSource) ?? "Manual"
         priority = try container.decodeIfPresent(LeadPriority.self, forKey: .priority) ?? .warm
         tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        contactRole = try container.decodeIfPresent(ContactRole.self, forKey: .contactRole) ?? .decisionMaker
+        isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
+        expectedCloseDate = try container.decodeIfPresent(Date.self, forKey: .expectedCloseDate)
         contactIntel = try container.decodeIfPresent(ContactIntel.self, forKey: .contactIntel) ?? ContactIntel()
         referralSource = try container.decodeIfPresent(String.self, forKey: .referralSource) ?? ""
         competitorName = try container.decodeIfPresent(String.self, forKey: .competitorName) ?? ""

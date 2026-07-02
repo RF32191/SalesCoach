@@ -12,10 +12,18 @@ struct CRMTasksView: View {
     }
     private var hotLeads: [Lead] { appState.crm.hotLeads() }
 
+    private var stale: [Lead] { appState.crm.staleLeads() }
+    private var overdueTasks: [CRMTask] { appState.crm.overdueTasks() }
+    private var todayTasks: [CRMTask] { appState.crm.tasksDueToday() }
+
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 16) {
                 summaryStrip
+
+                if !overdueTasks.isEmpty || !todayTasks.isEmpty {
+                    crmTaskSection
+                }
 
                 if !overdue.isEmpty {
                     taskSection(title: "Overdue", subtitle: "Needs immediate action", icon: "exclamationmark.triangle.fill", color: AppTheme.dangerRed, leads: overdue)
@@ -29,11 +37,15 @@ struct CRMTasksView: View {
                     taskSection(title: "Hot Leads", subtitle: "High-priority active deals", icon: "flame.fill", color: AppTheme.dangerRed, leads: hotLeads)
                 }
 
+                if !stale.isEmpty {
+                    taskSection(title: "Going Cold", subtitle: "No contact in 14+ days", icon: "thermometer.snowflake", color: AppTheme.electricBlueBright, leads: stale)
+                }
+
                 if !upcoming.isEmpty {
                     taskSection(title: "This Week", subtitle: "Upcoming follow-ups", icon: "calendar", color: AppTheme.electricBlueBright, leads: upcoming)
                 }
 
-                if overdue.isEmpty && today.isEmpty && upcoming.isEmpty && hotLeads.isEmpty {
+                if overdue.isEmpty && today.isEmpty && upcoming.isEmpty && hotLeads.isEmpty && stale.isEmpty && overdueTasks.isEmpty && todayTasks.isEmpty {
                     EmptyStateView(
                         icon: "checkmark.circle.fill",
                         title: "You're caught up",
@@ -50,8 +62,51 @@ struct CRMTasksView: View {
         HStack(spacing: 10) {
             TaskStatChip(label: "Overdue", value: "\(overdue.count)", color: AppTheme.dangerRed)
             TaskStatChip(label: "Today", value: "\(today.count)", color: AppTheme.warningOrange)
+            TaskStatChip(label: "Cold", value: "\(stale.count)", color: AppTheme.electricBlueBright)
             TaskStatChip(label: "Hot", value: "\(hotLeads.count)", color: AppTheme.successGreen)
         }
+    }
+
+    private var crmTaskSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "checklist")
+                    .foregroundStyle(AppTheme.tealGreen)
+                Text("Deal Tasks")
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.primaryText(for: colorScheme))
+            }
+
+            ForEach(overdueTasks + todayTasks) { task in
+                if let lead = appState.crm.leads.first(where: { $0.id == task.leadId }) {
+                    NavigationLink {
+                        LeadDetailView(lead: lead)
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(task.title)
+                                    .font(.subheadline.bold())
+                                    .foregroundStyle(AppTheme.primaryText(for: colorScheme))
+                                Text(lead.company.isEmpty ? lead.name : lead.company)
+                                    .font(.caption)
+                                    .foregroundStyle(AppTheme.secondaryText(for: colorScheme))
+                            }
+                            Spacer()
+                            Text(task.dueDate.formatted(date: .abbreviated, time: .omitted))
+                                .font(.caption2.bold())
+                                .foregroundStyle(task.isOverdue ? AppTheme.dangerRed : AppTheme.warningOrange)
+                        }
+                        .padding(12)
+                        .background(AppTheme.elevatedBackground(for: colorScheme))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(14)
+        .background(AppTheme.cardBackground(for: colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
     private func taskSection(title: String, subtitle: String, icon: String, color: Color, leads: [Lead]) -> some View {
@@ -203,17 +258,51 @@ struct DealHealthRing: View {
 
 struct CRMQuickActionsBar: View {
     let lead: Lead
+    var onCall: (() -> Void)? = nil
+    var onEmail: (() -> Void)? = nil
     var onLogCall: () -> Void
     var onLogEmail: () -> Void
     var onScheduleFollowUp: () -> Void
     var onGenerateFollowUp: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            QuickActionButton(title: "Call", icon: "phone.fill", color: AppTheme.successGreen, action: onLogCall)
-            QuickActionButton(title: "Email", icon: "envelope.fill", color: AppTheme.electricBlueBright, action: onLogEmail)
-            QuickActionButton(title: "Schedule", icon: "calendar.badge.plus", color: AppTheme.warningOrange, action: onScheduleFollowUp)
-            QuickActionButton(title: "AI Draft", icon: "sparkles", color: AppTheme.tealGreen, action: onGenerateFollowUp)
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                QuickActionButton(title: "Call", icon: "phone.fill", color: AppTheme.successGreen) {
+                    onCall?() ?? onLogCall()
+                }
+                QuickActionButton(title: "Email", icon: "envelope.fill", color: AppTheme.electricBlueBright) {
+                    onEmail?() ?? onLogEmail()
+                }
+                QuickActionButton(title: "Schedule", icon: "calendar.badge.plus", color: AppTheme.warningOrange, action: onScheduleFollowUp)
+                QuickActionButton(title: "AI Draft", icon: "sparkles", color: AppTheme.tealGreen, action: onGenerateFollowUp)
+            }
+
+            HStack(spacing: 10) {
+                if !lead.phone.isEmpty,
+                   let url = URL(string: "tel://\(lead.phone.filter { $0.isNumber || $0 == "+" })") {
+                    Link(destination: url) {
+                        Label("Dial", systemImage: "phone.connection")
+                            .font(.caption2.bold())
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .foregroundStyle(AppTheme.successGreen)
+                            .background(AppTheme.successGreen.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+                if !lead.email.isEmpty, let url = URL(string: "mailto:\(lead.email)") {
+                    Link(destination: url) {
+                        Label("Mail", systemImage: "envelope")
+                            .font(.caption2.bold())
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .foregroundStyle(AppTheme.electricBlueBright)
+                            .background(AppTheme.electricBlueBright.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
         }
     }
 }

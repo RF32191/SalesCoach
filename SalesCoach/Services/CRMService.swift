@@ -4,9 +4,11 @@ import Foundation
 @Observable
 final class CRMService {
     var leads: [Lead] = []
+    var tasks: [CRMTask] = []
     var syncGeofencing: (([Lead]) -> Void)?
 
     private let storageKey = "salescoach_leads"
+    private let tasksStorageKey = "salescoach_crm_tasks"
 
     func loadLeads(for userId: String) {
         guard let data = UserDefaults.standard.data(forKey: storageKey),
@@ -22,6 +24,45 @@ final class CRMService {
             saveLeads()
         }
         notifyGeofencingSync()
+    }
+
+    func loadTasks(for userId: String) {
+        guard let data = UserDefaults.standard.data(forKey: tasksStorageKey),
+              let stored = try? JSONDecoder().decode([CRMTask].self, from: data) else {
+            tasks = []
+            return
+        }
+        let leadIds = Set(leads.map(\.id))
+        tasks = stored.filter { leadIds.contains($0.leadId) }
+    }
+
+    func addTask(_ task: CRMTask) {
+        tasks.insert(task, at: 0)
+        saveTasks()
+    }
+
+    func completeTask(_ taskId: String) {
+        guard let index = tasks.firstIndex(where: { $0.id == taskId }) else { return }
+        tasks[index].isCompleted = true
+        saveTasks()
+    }
+
+    func deleteTask(_ taskId: String) {
+        tasks.removeAll { $0.id == taskId }
+        saveTasks()
+    }
+
+    func openTasks(for leadId: String) -> [CRMTask] {
+        tasks.filter { $0.leadId == leadId && !$0.isCompleted }
+            .sorted { $0.dueDate < $1.dueDate }
+    }
+
+    func overdueTasks() -> [CRMTask] {
+        tasks.filter { $0.isOverdue }.sorted { $0.dueDate < $1.dueDate }
+    }
+
+    func tasksDueToday() -> [CRMTask] {
+        tasks.filter { $0.isDueToday }.sorted { $0.dueDate < $1.dueDate }
     }
 
     func addLead(_ lead: Lead) -> Bool {
@@ -177,6 +218,112 @@ final class CRMService {
             .sorted { $0.dealHealthScore > $1.dealHealthScore }
     }
 
+    func staleLeads(thresholdDays: Int = 14) -> [Lead] {
+        leads
+            .filter { lead in
+                guard lead.dealStage.isActivePipeline else { return false }
+                guard let days = lead.daysSinceLastContact else { return true }
+                return days >= thresholdDays
+            }
+            .sorted { ($0.daysSinceLastContact ?? 999) > ($1.daysSinceLastContact ?? 999) }
+    }
+
+    func favoriteLeads() -> [Lead] {
+        leads.filter(\.isFavorite).sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    func toggleFavorite(for leadId: String) {
+        guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
+        leads[index].isFavorite.toggle()
+        leads[index].updatedAt = .now
+        saveLeads()
+    }
+
+    func snoozeFollowUp(for leadId: String, days: Int) {
+        guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
+        let date = Calendar.current.date(byAdding: .day, value: days, to: .now) ?? .now
+        leads[index].nextFollowUpDate = date
+        leads[index].dealEvents.insert(
+            DealEvent(type: .followUpScheduled, summary: "Follow-up snoozed for \(days) day\(days == 1 ? "" : "s")"),
+            at: 0
+        )
+        leads[index].updatedAt = .now
+        saveLeads()
+    }
+
+    func markWon(_ leadId: String, finalValue: Double? = nil) {
+        guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
+        if let finalValue { leads[index].dealValue = finalValue }
+        leads[index].probabilityOfClosing = 100
+        moveLead(leadId, to: .won)
+    }
+
+    func markLost(_ leadId: String, reason: String) {
+        guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
+        let previous = leads[index].dealStage
+        leads[index].lostReason = reason
+        leads[index].probabilityOfClosing = 0
+        leads[index].dealStage = .lost
+        leads[index].dealEvents.insert(
+            DealEvent(type: .stageChange, summary: "Moved from \(previous.rawValue) to Lost"),
+            at: 0
+        )
+        leads[index].dealEvents.insert(
+            DealEvent(type: .note, summary: "Lost: \(reason.isEmpty ? "No reason recorded" : reason)"),
+            at: 0
+        )
+        leads[index].updatedAt = .now
+        saveLeads()
+    }
+
+    func companiesGrouped() -> [CompanyGroup] {
+        let grouped = Dictionary(grouping: leads.filter { !$0.company.isEmpty }, by: \.company)
+        return grouped
+            .map { CompanyGroup(company: $0.key, leads: $0.value.sorted { $0.dealValue > $1.dealValue }) }
+            .sorted { $0.totalValue > $1.totalValue }
+    }
+
+    func allTags() -> [String] {
+        Array(Set(leads.flatMap(\.tags))).sorted()
+    }
+
+    func filteredLeads(
+        search: String = "",
+        stage: DealStage? = nil,
+        listFilter: CRMListFilter = .all,
+        sort: LeadSortOption = .recentlyUpdated
+    ) -> [Lead] {
+        var result = leads.filter { lead in
+            let matchesSearch = search.isEmpty ||
+                lead.name.localizedCaseInsensitiveContains(search) ||
+                lead.company.localizedCaseInsensitiveContains(search) ||
+                lead.tags.contains { $0.localizedCaseInsensitiveContains(search) }
+            let matchesStage = stage == nil || lead.dealStage == stage
+            let matchesFilter: Bool = switch listFilter {
+            case .all: true
+            case .favorites: lead.isFavorite
+            case .hot: lead.priority == .hot && lead.dealStage.isActivePipeline
+            case .stale: lead.isStale
+            case .overdue: lead.isFollowUpOverdue && lead.dealStage.isActivePipeline
+            }
+            return matchesSearch && matchesStage && matchesFilter
+        }
+
+        switch sort {
+        case .recentlyUpdated:
+            result.sort { $0.updatedAt > $1.updatedAt }
+        case .followUpDate:
+            result.sort { ($0.nextFollowUpDate ?? .distantFuture) < ($1.nextFollowUpDate ?? .distantFuture) }
+        case .dealValue:
+            result.sort { $0.dealValue > $1.dealValue }
+        case .healthScore:
+            result.sort { $0.dealHealthScore > $1.dealHealthScore }
+        case .name:
+            result.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        }
+        return result
+    }
+
     func pinnedLeadCount() -> Int {
         leads.filter { $0.location.pinReminderEnabled && $0.location.hasCoordinates }.count
     }
@@ -275,6 +422,12 @@ final class CRMService {
     private func saveLeads() {
         if let data = try? JSONEncoder().encode(leads) {
             UserDefaults.standard.set(data, forKey: storageKey)
+        }
+    }
+
+    private func saveTasks() {
+        if let data = try? JSONEncoder().encode(tasks) {
+            UserDefaults.standard.set(data, forKey: tasksStorageKey)
         }
     }
 

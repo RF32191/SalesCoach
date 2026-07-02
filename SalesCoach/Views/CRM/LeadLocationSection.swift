@@ -43,6 +43,14 @@ struct LeadLocationSection: View {
                 Text(String(format: "%.5f, %.5f", coordinate.latitude, coordinate.longitude))
                     .font(.caption2)
                     .foregroundStyle(AppTheme.textMuted)
+
+                AppleMapsNavigateButton(
+                    title: "Navigate in Apple Maps",
+                    name: location.locationLabel.isEmpty ? "Lead Location" : location.locationLabel,
+                    latitude: coordinate.latitude,
+                    longitude: coordinate.longitude,
+                    origin: appState.location.currentCoordinate
+                )
             }
 
             Toggle(isOn: $location.pinReminderEnabled) {

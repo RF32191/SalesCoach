@@ -60,6 +60,13 @@ final class ProspectDiscoveryService {
             combined.append(contentsOf: found)
         }
 
+        let poiResults = await searchByPOICategories(
+            category: category,
+            coordinate: coordinate,
+            radiusMeters: radius.meters
+        )
+        combined.append(contentsOf: poiResults)
+
         results = combined
             .uniqued(by: \.id)
             .filter { prospect in
@@ -112,34 +119,68 @@ final class ProspectDiscoveryService {
             let origin = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
 
             return response.mapItems.compactMap { item in
-                guard let name = item.name, let location = item.placemark.location else { return nil }
                 guard category.matches(mapItem: item, companyQuery: companyQuery) else { return nil }
-
-                let matchedCategory = SalesCategory.bestMatch(for: item) ?? category
-
-                let street = [item.placemark.subThoroughfare, item.placemark.thoroughfare]
-                    .compactMap { $0 }
-                    .joined(separator: " ")
-                let city = [item.placemark.locality, item.placemark.administrativeArea]
-                    .compactMap { $0 }
-                    .joined(separator: ", ")
-
-                return DiscoveredProspect(
-                    id: "\(name)-\(location.coordinate.latitude)-\(location.coordinate.longitude)",
-                    name: name,
-                    address: street.isEmpty ? (city.isEmpty ? "Nearby location" : city) : street,
-                    city: city,
-                    latitude: location.coordinate.latitude,
-                    longitude: location.coordinate.longitude,
-                    phone: item.phoneNumber,
-                    website: item.url?.absoluteString,
-                    category: matchedCategory,
-                    distanceMeters: origin.distance(from: location)
-                )
+                return prospect(from: item, category: category, origin: origin)
             }
         } catch {
             return []
         }
+    }
+
+    private func searchByPOICategories(
+        category: SalesCategory,
+        coordinate: CLLocationCoordinate2D,
+        radiusMeters: Double
+    ) async -> [DiscoveredProspect] {
+        guard !category.poiCategories.isEmpty else { return [] }
+
+        if #available(iOS 18.0, *) {
+            let poiRequest = MKLocalPointsOfInterestRequest(center: coordinate, radius: radiusMeters)
+            poiRequest.pointOfInterestFilter = MKPointOfInterestFilter(including: Array(category.poiCategories))
+
+            do {
+                let search = MKLocalSearch(request: poiRequest)
+                let response = try await search.start()
+                let origin = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+                return response.mapItems.compactMap { item in
+                    prospect(from: item, category: category, origin: origin)
+                }
+            } catch {
+                return []
+            }
+        }
+
+        return []
+    }
+
+    private func prospect(
+        from item: MKMapItem,
+        category: SalesCategory,
+        origin: CLLocation
+    ) -> DiscoveredProspect? {
+        guard let name = item.name, let location = item.placemark.location else { return nil }
+        guard category.matches(mapItem: item) else { return nil }
+
+        let matchedCategory = SalesCategory.bestMatch(for: item) ?? category
+        let street = [item.placemark.subThoroughfare, item.placemark.thoroughfare]
+            .compactMap { $0 }
+            .joined(separator: " ")
+        let city = [item.placemark.locality, item.placemark.administrativeArea]
+            .compactMap { $0 }
+            .joined(separator: ", ")
+
+        return DiscoveredProspect(
+            id: "\(name)-\(location.coordinate.latitude)-\(location.coordinate.longitude)",
+            name: name,
+            address: street.isEmpty ? (city.isEmpty ? "Nearby location" : city) : street,
+            city: city,
+            latitude: location.coordinate.latitude,
+            longitude: location.coordinate.longitude,
+            phone: item.phoneNumber,
+            website: item.url?.absoluteString,
+            category: matchedCategory,
+            distanceMeters: origin.distance(from: location)
+        )
     }
 
     func clearResults() {

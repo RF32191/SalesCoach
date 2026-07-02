@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct LeadDetailView: View {
     @Environment(AppState.self) private var appState
@@ -10,6 +11,8 @@ struct LeadDetailView: View {
     @State private var newActivityType: LeadActivityType = .note
     @State private var preCallBriefing: PreCallBriefing?
     @State private var isLoadingBriefing = false
+    @State private var showDealOutcome = false
+    @State private var showSnooze = false
 
     var body: some View {
         ScrollView {
@@ -18,16 +21,31 @@ struct LeadDetailView: View {
                 dealHealthSection
                 CRMQuickActionsBar(
                     lead: lead,
+                    onCall: { dialLead() },
+                    onEmail: { emailLead() },
                     onLogCall: { logQuickContact(type: .call, summary: "Outbound call with \(lead.name)") },
                     onLogEmail: { logQuickContact(type: .email, summary: "Sent email to \(lead.name)") },
                     onScheduleFollowUp: { showScheduleFollowUp = true },
                     onGenerateFollowUp: { showFollowUp = true }
                 )
                 dealInfoSection
+                LeadTagsEditor(tags: $lead.tags)
                 dealCoachingSection
+                LeadTasksSection(leadId: lead.id)
                 timelineSection
                 ContactIntelForm(intel: $lead.contactIntel)
                 LeadLocationSection(location: $lead.location)
+                if lead.location.hasCoordinates,
+                   let latitude = lead.location.latitude,
+                   let longitude = lead.location.longitude {
+                    AppleMapsNavigateButton(
+                        title: "Navigate in Apple Maps",
+                        name: lead.company.isEmpty ? lead.name : lead.company,
+                        latitude: latitude,
+                        longitude: longitude,
+                        origin: appState.location.currentCoordinate
+                    )
+                }
                 aiActionSection
                 activitySection
                 datesSection
@@ -46,6 +64,18 @@ struct LeadDetailView: View {
         .appBackground()
         .navigationTitle(lead.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    appState.crm.toggleFavorite(for: lead.id)
+                    lead.isFavorite.toggle()
+                    Haptic.selection()
+                } label: {
+                    Image(systemName: lead.isFavorite ? "star.fill" : "star")
+                        .foregroundStyle(AppTheme.warningOrange)
+                }
+            }
+        }
         .sheet(isPresented: $showFollowUp) {
             FollowUpGeneratorView(lead: lead)
         }
@@ -54,6 +84,22 @@ struct LeadDetailView: View {
             Button("In 3 Days") { scheduleFollowUp(days: 3) }
             Button("Next Week") { scheduleFollowUp(days: 7) }
             Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog("Snooze Follow-Up", isPresented: $showSnooze) {
+            Button("1 Day") { snooze(days: 1) }
+            Button("3 Days") { snooze(days: 3) }
+            Button("1 Week") { snooze(days: 7) }
+            Button("Cancel", role: .cancel) {}
+        }
+        .sheet(isPresented: $showDealOutcome) {
+            DealOutcomeSheet(lead: lead) { finalValue in
+                appState.crm.markWon(lead.id, finalValue: finalValue)
+                if let updated = appState.crm.leads.first(where: { $0.id == lead.id }) { lead = updated }
+                Haptic.success()
+            } onLost: { reason in
+                appState.crm.markLost(lead.id, reason: reason)
+                if let updated = appState.crm.leads.first(where: { $0.id == lead.id }) { lead = updated }
+            }
         }
         .onChange(of: lead) { _, newValue in
             appState.crm.updateLead(newValue)
@@ -126,6 +172,32 @@ struct LeadDetailView: View {
                     .font(.caption.bold())
             }
 
+            HStack(spacing: 10) {
+                Button { showSnooze = true } label: {
+                    Label("Snooze", systemImage: "moon.zzz.fill")
+                        .font(.caption.bold())
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(AppTheme.navyElevated)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                Button { showDealOutcome = true } label: {
+                    Label("Close Deal", systemImage: "flag.checkered")
+                        .font(.caption.bold())
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(AppTheme.successGreen.opacity(0.15))
+                        .foregroundStyle(AppTheme.successGreen)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+            }
+
+            if lead.isStale {
+                Label(lead.staleLabel, systemImage: "thermometer.snowflake")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.dangerRed)
+            }
+
             if let preCallBriefing {
                 PreCallBriefingView(lead: lead, briefing: preCallBriefing)
             }
@@ -184,6 +256,24 @@ struct LeadDetailView: View {
             InfoRow(label: "Deal Value", value: "$\(Int(lead.dealValue))")
             InfoRow(label: "Stage", value: lead.dealStage.rawValue)
             InfoRow(label: "Close Probability", value: "\(lead.probabilityOfClosing)%")
+
+            Picker("Contact Role", selection: $lead.contactRole) {
+                ForEach(ContactRole.allCases) { role in
+                    Label(role.rawValue, systemImage: role.icon).tag(role)
+                }
+            }
+            .pickerStyle(.menu)
+
+            DatePicker(
+                "Expected Close",
+                selection: Binding(
+                    get: { lead.expectedCloseDate ?? Calendar.current.date(byAdding: .month, value: 1, to: .now)! },
+                    set: { lead.expectedCloseDate = $0 }
+                ),
+                displayedComponents: .date
+            )
+            .tint(AppTheme.electricBlue)
+
             TextField("Referral source", text: $lead.referralSource).textFieldStyle(AppTextFieldStyle())
             TextField("Competitor", text: $lead.competitorName).textFieldStyle(AppTextFieldStyle())
             TextField("Objection tags (comma separated)", text: Binding(
@@ -287,6 +377,12 @@ struct LeadDetailView: View {
             InfoRow(label: "Email", value: lead.email.isEmpty ? "—" : lead.email)
             InfoRow(label: "Last Contacted", value: lead.lastContactedDate?.formatted(date: .abbreviated, time: .omitted) ?? "Never")
             InfoRow(label: "Next Follow-Up", value: lead.nextFollowUpDate?.formatted(date: .abbreviated, time: .omitted) ?? "Not set")
+            if let expectedClose = lead.expectedCloseDate {
+                InfoRow(label: "Expected Close", value: expectedClose.formatted(date: .abbreviated, time: .omitted))
+            }
+            if lead.dealStage == .lost, !lead.lostReason.isEmpty {
+                InfoRow(label: "Lost Reason", value: lead.lostReason)
+            }
         }
         .cardStyle()
     }
@@ -334,6 +430,27 @@ struct LeadDetailView: View {
         let date = Calendar.current.date(byAdding: .day, value: days, to: .now) ?? .now
         lead.nextFollowUpDate = date
         appState.crm.scheduleFollowUp(for: lead.id, date: date)
+    }
+
+    private func snooze(days: Int) {
+        appState.crm.snoozeFollowUp(for: lead.id, days: days)
+        if let updated = appState.crm.leads.first(where: { $0.id == lead.id }) { lead = updated }
+    }
+
+    private func dialLead() {
+        let digits = lead.phone.filter { $0.isNumber || $0 == "+" }
+        guard !digits.isEmpty, let url = URL(string: "tel://\(digits)") else { return }
+        UIApplication.shared.open(url)
+        logQuickContact(type: .call, summary: "Called \(lead.name)")
+    }
+
+    private func emailLead() {
+        guard !lead.email.isEmpty else { return }
+        let subject = "Following up — \(lead.company.isEmpty ? lead.name : lead.company)"
+        let encoded = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        guard let url = URL(string: "mailto:\(lead.email)?subject=\(encoded)") else { return }
+        UIApplication.shared.open(url)
+        logQuickContact(type: .email, summary: "Emailed \(lead.name)")
     }
 
     private func persistGoals() {

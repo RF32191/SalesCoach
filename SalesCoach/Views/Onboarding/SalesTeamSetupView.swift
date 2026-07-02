@@ -353,6 +353,18 @@ struct ProximityBriefingView: View {
 
     private var actionSection: some View {
         VStack(spacing: 10) {
+            if lead.location.hasCoordinates,
+               let latitude = lead.location.latitude,
+               let longitude = lead.location.longitude {
+                AppleMapsNavigateButton(
+                    title: "Navigate in Apple Maps",
+                    name: lead.company.isEmpty ? lead.name : lead.company,
+                    latitude: latitude,
+                    longitude: longitude,
+                    origin: appState.location.currentCoordinate
+                )
+            }
+
             NavigationLink {
                 VoiceRoleplaySetupView(
                     preselectedScenario: DealCoachingService.shared.scenarioForLead(lead),

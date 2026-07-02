@@ -91,6 +91,22 @@ struct CRMMapView: View {
                     .background(AppTheme.navyCard.opacity(0.9))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .padding(.horizontal)
+            } else if let nearest = leadsWithPins.first, nearest.location.hasCoordinates {
+                Button {
+                    AppleMapsNavigation.openDirections(
+                        to: nearest,
+                        from: appState.location.currentCoordinate
+                    )
+                } label: {
+                    Label("Navigate to Nearest Client", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(AppTheme.tealGreen)
+                        .clipShape(Capsule())
+                }
+                .padding(.horizontal)
             }
 
             Spacer()

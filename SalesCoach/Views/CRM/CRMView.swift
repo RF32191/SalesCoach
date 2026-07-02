@@ -6,6 +6,8 @@ struct CRMView: View {
     @State private var showAddLead = false
     @State private var searchText = ""
     @State private var filterStage: DealStage?
+    @State private var listFilter: CRMListFilter = .all
+    @State private var sortOption: LeadSortOption = .recentlyUpdated
     @State private var viewMode: CRMViewMode
 
     init(initialViewMode: CRMViewMode = .dashboard) {
@@ -17,17 +19,17 @@ struct CRMView: View {
         case pipeline = "Pipeline"
         case tasks = "Tasks"
         case list = "List"
+        case companies = "Companies"
         case map = "Map"
     }
 
     var filteredLeads: [Lead] {
-        appState.crm.leads.filter { lead in
-            let matchesSearch = searchText.isEmpty ||
-                lead.name.localizedCaseInsensitiveContains(searchText) ||
-                lead.company.localizedCaseInsensitiveContains(searchText)
-            let matchesStage = filterStage == nil || lead.dealStage == filterStage
-            return matchesSearch && matchesStage
-        }
+        appState.crm.filteredLeads(
+            search: searchText,
+            stage: filterStage,
+            listFilter: listFilter,
+            sort: sortOption
+        )
     }
 
     private var snapshot: CRMSnapshot { appState.crm.snapshot() }
@@ -72,6 +74,8 @@ struct CRMView: View {
                 }
             case .list:
                 listContent
+            case .companies:
+                CRMCompaniesView()
             }
         }
         .appBackground()
@@ -79,6 +83,18 @@ struct CRMView: View {
         .navigationBarTitleDisplayMode(.large)
         .searchable(text: $searchText, prompt: "Search clients")
         .toolbar {
+            ToolbarItem(placement: .platformTrailing) {
+                Menu {
+                    Picker("Sort", selection: $sortOption) {
+                        ForEach(LeadSortOption.allCases) { option in
+                            Text(option.rawValue).tag(option)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down.circle")
+                        .foregroundStyle(AppTheme.electricBlue)
+                }
+            }
             ToolbarItem(placement: .platformTrailing) {
                 Button { showAddLead = true } label: {
                     Image(systemName: "plus.circle.fill")
@@ -114,6 +130,7 @@ struct CRMView: View {
     private var listContent: some View {
         List {
             Section {
+                listFilterChips
                 stageFilter
             }
             .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
@@ -137,6 +154,13 @@ struct CRMView: View {
                 }
                 .swipeActions(edge: .trailing) {
                     Button {
+                        appState.crm.toggleFavorite(for: lead.id)
+                    } label: {
+                        Label(lead.isFavorite ? "Unstar" : "Star", systemImage: lead.isFavorite ? "star.slash" : "star.fill")
+                    }
+                    .tint(AppTheme.warningOrange)
+
+                    Button {
                         appState.crm.moveLead(lead.id, to: .contacted)
                     } label: {
                         Label("Contacted", systemImage: "checkmark")
@@ -156,6 +180,18 @@ struct CRMView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+    }
+
+    private var listFilterChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(CRMListFilter.allCases) { filter in
+                    FilterChip(title: filter.rawValue, isSelected: listFilter == filter) {
+                        listFilter = filter
+                    }
+                }
+            }
+        }
     }
 
     private var stageFilter: some View {
@@ -218,6 +254,11 @@ struct LeadRow: View {
                     Text(lead.name)
                         .font(.headline)
                         .foregroundStyle(AppTheme.textPrimary)
+                    if lead.isFavorite {
+                        Image(systemName: "star.fill")
+                            .font(.caption2)
+                            .foregroundStyle(AppTheme.warningOrange)
+                    }
                     PriorityBadge(priority: lead.priority)
                     if lead.isFollowUpOverdue {
                         Image(systemName: "exclamationmark.circle.fill")
@@ -235,6 +276,11 @@ struct LeadRow: View {
                     .foregroundStyle(AppTheme.textSecondary)
                 HStack(spacing: 8) {
                     StageBadge(stage: lead.dealStage)
+                    if lead.isStale {
+                        Label("Cold", systemImage: "thermometer.snowflake")
+                            .font(.caption2)
+                            .foregroundStyle(AppTheme.dangerRed)
+                    }
                     if !lead.leadSource.isEmpty {
                         Text(lead.leadSource)
                             .font(.caption2)

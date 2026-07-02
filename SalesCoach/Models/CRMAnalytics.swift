@@ -110,4 +110,20 @@ extension Lead {
         default: return "At risk"
         }
     }
+
+    var daysSinceLastContact: Int? {
+        guard let lastContactedDate else { return nil }
+        return Calendar.current.dateComponents([.day], from: lastContactedDate, to: .now).day
+    }
+
+    var isStale: Bool {
+        guard dealStage.isActivePipeline else { return false }
+        guard let days = daysSinceLastContact else { return true }
+        return days >= 14
+    }
+
+    var staleLabel: String {
+        guard let days = daysSinceLastContact else { return "Never contacted" }
+        return "No contact in \(days) days"
+    }
 }

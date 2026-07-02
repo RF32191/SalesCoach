@@ -50,6 +50,7 @@ final class AppState {
         }
         certifications.load(for: user.id)
         teamGoals.load(for: user.id)
+        crm.loadTasks(for: user.id)
         certifications.evaluate(sessions: training.sessions.filter { $0.userId == user.id })
         location.startGeofencing(for: crm.leads.filter { $0.location.pinReminderEnabled && $0.location.hasCoordinates })
     }

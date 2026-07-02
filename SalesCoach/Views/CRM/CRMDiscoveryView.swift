@@ -48,6 +48,9 @@ struct CompanyDiscoveryView: View {
                 companySearch = initialSearch
             }
             appState.location.requestAuthorization()
+            if appState.location.isLocationAuthorized {
+                Task { await lockLocationAndSearch() }
+            }
         }
         .sheet(item: $selectedProspect) { prospect in
             ProspectLockSheet(prospect: prospect) { lead in
@@ -208,6 +211,13 @@ struct CompanyDiscoveryView: View {
             }
 
             notableTargetsSection
+
+            if hasSearched && !appState.discovery.results.isEmpty {
+                Label("Showing \(selectedCategory.rawValue) businesses matched to your sales vertical", systemImage: selectedCategory.icon)
+                    .font(.caption)
+                    .foregroundStyle(selectedCategory.accentColor)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding()
         .background(AppTheme.elevatedBackground(for: colorScheme))
@@ -362,6 +372,16 @@ struct CompanyDiscoveryView: View {
                             ProspectRow(prospect: prospect)
                         }
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            Button {
+                                AppleMapsNavigation.openDirections(
+                                    to: prospect,
+                                    from: appState.location.currentCoordinate
+                                )
+                            } label: {
+                                Label("Navigate in Apple Maps", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
+                            }
+                        }
                     }
                 }
             }
@@ -522,6 +542,16 @@ struct ProspectLockSheet: View {
 
                 Section("Proximity Alerts") {
                     Toggle("Alert me with contact facts when I'm nearby", isOn: $enableProximityAlert)
+                }
+
+                Section {
+                    AppleMapsNavigateButton(
+                        title: "Navigate in Apple Maps",
+                        name: prospect.name,
+                        latitude: prospect.latitude,
+                        longitude: prospect.longitude,
+                        origin: appState.location.currentCoordinate
+                    )
                 }
             }
             .navigationTitle("Add to CRM")

@@ -148,6 +148,13 @@ struct CRMHubView: View {
             .buttonStyle(.plain)
 
             NavigationLink {
+                CRMView(initialViewMode: .companies)
+            } label: {
+                FeatureCard(title: "Companies", subtitle: "Group contacts by organization and pipeline value", icon: "building.2.fill", accentColor: AppTheme.electricBlue)
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink {
                 CRMView(initialViewMode: .map)
             } label: {
                 FeatureCard(title: "Pinned Client Map", subtitle: "GPS-tracked leads and proximity alerts", icon: "map.fill", accentColor: AppTheme.successGreen)
