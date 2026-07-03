@@ -84,7 +84,7 @@ struct Lead: Codable, Identifiable, Equatable {
         lastContactedDate: Date? = nil,
         nextFollowUpDate: Date? = nil,
         probabilityOfClosing: Int = 20,
-        aiRecommendedAction: String = "Send an introductory email to establish rapport.",
+        aiRecommendedAction: String = "",
         leadSource: String = "Manual",
         priority: LeadPriority = .warm,
         tags: [String] = [],
@@ -153,8 +153,7 @@ struct Lead: Codable, Identifiable, Equatable {
         lastContactedDate = try container.decodeIfPresent(Date.self, forKey: .lastContactedDate)
         nextFollowUpDate = try container.decodeIfPresent(Date.self, forKey: .nextFollowUpDate)
         probabilityOfClosing = try container.decodeIfPresent(Int.self, forKey: .probabilityOfClosing) ?? 20
-        aiRecommendedAction = try container.decodeIfPresent(String.self, forKey: .aiRecommendedAction)
-            ?? "Send an introductory email to establish rapport."
+        aiRecommendedAction = try container.decodeIfPresent(String.self, forKey: .aiRecommendedAction) ?? ""
         leadSource = try container.decodeIfPresent(String.self, forKey: .leadSource) ?? "Manual"
         priority = try container.decodeIfPresent(LeadPriority.self, forKey: .priority) ?? .warm
         tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []

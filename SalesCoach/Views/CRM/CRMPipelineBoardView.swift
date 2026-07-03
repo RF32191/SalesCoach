@@ -112,11 +112,19 @@ struct PipelineCard: View {
                     .font(.caption.bold())
                     .foregroundStyle(AppTheme.successGreen)
                 Spacer()
-                PriorityBadge(priority: lead.priority)
+                DealHealthRing(score: lead.dealHealthScore, size: 32)
             }
 
             HStack {
-                Text("\(lead.probabilityOfClosing)%")
+                PriorityBadge(priority: lead.priority)
+                Spacer()
+                Text(lead.dealHealthLabel)
+                    .font(.caption2.bold())
+                    .foregroundStyle(lead.dealHealthColor)
+            }
+
+            HStack {
+                Text("\(lead.probabilityOfClosing)% close")
                     .font(.caption2.bold())
                     .foregroundStyle(stageColor)
                 Spacer()

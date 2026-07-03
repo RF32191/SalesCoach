@@ -185,7 +185,7 @@ struct CRMTaskRow: View {
                 Text(lead.company.isEmpty ? lead.name : lead.company)
                     .font(.subheadline.bold())
                     .foregroundStyle(AppTheme.primaryText(for: colorScheme))
-                Text(lead.aiRecommendedAction)
+                Text(lead.displayAIAction)
                     .font(.caption)
                     .foregroundStyle(AppTheme.secondaryText(for: colorScheme))
                     .lineLimit(2)

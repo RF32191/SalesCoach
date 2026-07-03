@@ -72,6 +72,57 @@ function handleOpenAIError(err, res, fallbackMessage) {
   return res.status(500).json({ error: msg });
 }
 
+app.post("/api/chat/team-sales", async (req, res) => {
+  try {
+    const { messages, repName, teamMembers, leads } = req.body;
+    if (!Array.isArray(messages)) {
+      return res.status(400).json({ error: "messages array required" });
+    }
+    const teamSummary = (teamMembers || [])
+      .slice(0, 8)
+      .map((m) => `- ${m.name || m.fullName || "Rep"}`)
+      .join("\n");
+    const leadSummary = (leads || [])
+      .slice(0, 8)
+      .map((l) => `- ${l.name} @ ${l.company || "no company"}`)
+      .join("\n");
+    const system = `${COACH_PROMPT}
+
+This is an internal team sales log. Reps announce closed deals to their sales team. Clients do NOT use this app.
+
+When the user reports a closed sale, respond with JSON ONLY:
+{"reply":"friendly confirmation","actions":[{"type":"logSale","leadMatch":"Client or Company","dealValue":5000,"summary":"optional notes"}]}
+
+Only use action type logSale. Do NOT create leads, log calls, or schedule follow-ups.
+
+Rep logging: ${repName || "Sales Rep"}
+Team:
+${teamSummary || "(solo rep)"}
+
+Known accounts (optional CRM match):
+${leadSummary || "(none)"}`;
+
+    const result = await chatCompletion(
+      [{ role: "system", content: system }, ...messages],
+      0.4
+    );
+    let parsed;
+    try {
+      parsed = JSON.parse(result.content.replace(/```json|```/g, "").trim());
+    } catch {
+      parsed = { reply: result.content, actions: [] };
+    }
+    const actions = (parsed.actions || []).filter((a) => a.type === "logSale");
+    res.json({
+      reply: parsed.reply || result.content,
+      actions,
+      tokensUsed: result.tokensUsed,
+    });
+  } catch (err) {
+    return handleOpenAIError(err, res, "Team sales chat failed");
+  }
+});
+
 app.post("/api/chat", async (req, res) => {
   try {
     const { messages } = req.body;

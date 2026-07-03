@@ -198,6 +198,44 @@ struct CallAnalysisResult: Equatable {
     let overallScore: Int
     let strengths: [String]
     let improvements: [String]
+    let confidenceScore: Int
+    let empathyScore: Int
+    let energyScore: Int
+    let professionalismScore: Int
+    let pacingLabel: String
+}
+
+extension CallAnalysisResult {
+    static func analyzeLocal(
+        transcript: String,
+        talkRatioPercent: Int,
+        questionsAsked: Int,
+        fillerWordCount: Int,
+        overallScore: Int,
+        strengths: [String],
+        improvements: [String]
+    ) -> CallAnalysisResult {
+        let empathyHints = ["understand", "feel", "help", "appreciate"]
+        let empathyHits = empathyHints.reduce(0) { $0 + (transcript.lowercased().contains($1) ? 1 : 0) }
+        let confidence = min(100, overallScore + (questionsAsked >= 3 ? 5 : 0))
+        let empathy = min(100, 55 + empathyHits * 12)
+        let energy = min(100, max(40, overallScore - fillerWordCount * 2))
+        let professionalism = min(100, overallScore + (fillerWordCount <= 2 ? 8 : -5))
+        let pacing: String = talkRatioPercent > 65 ? "Fast — leave more space" : talkRatioPercent < 45 ? "Patient — push for close" : "Balanced"
+        return CallAnalysisResult(
+            talkRatioPercent: talkRatioPercent,
+            questionsAsked: questionsAsked,
+            fillerWordCount: fillerWordCount,
+            overallScore: overallScore,
+            strengths: strengths,
+            improvements: improvements,
+            confidenceScore: confidence,
+            empathyScore: empathy,
+            energyScore: energy,
+            professionalismScore: professionalism,
+            pacingLabel: pacing
+        )
+    }
 }
 
 struct ArrivalChecklist: Equatable {

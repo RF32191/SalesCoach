@@ -6,6 +6,11 @@ final class CRMService {
     var leads: [Lead] = []
     var tasks: [CRMTask] = []
     var syncGeofencing: (([Lead]) -> Void)?
+    var onContactLogged: (() -> Void)?
+    var onDealWon: (() -> Void)?
+    var recordAudit: ((AuditEntry) -> Void)?
+    var recordClosedOrder: ((ClosedOrder, AuditEntry) -> Void)?
+    var onCalendarFollowUp: ((String, Date, String?) -> Void)?
 
     private let storageKey = "salescoach_leads"
     private let tasksStorageKey = "salescoach_crm_tasks"
@@ -13,17 +18,48 @@ final class CRMService {
     func loadLeads(for userId: String) {
         guard let data = UserDefaults.standard.data(forKey: storageKey),
               let stored = try? JSONDecoder().decode([Lead].self, from: data) else {
-            leads = Self.sampleLeads(ownerId: userId)
-            saveLeads()
+            leads = []
+            removeBundledExampleLeadsIfNeeded(for: userId)
             notifyGeofencingSync()
             return
         }
         leads = stored.filter { $0.ownerId == userId }
-        if leads.isEmpty {
-            leads = Self.sampleLeads(ownerId: userId)
-            saveLeads()
-        }
+        removeBundledExampleLeadsIfNeeded(for: userId)
         notifyGeofencingSync()
+    }
+
+    func loadExampleLeads(for userId: String) {
+        for lead in ExampleData.exampleLeads(ownerId: userId) {
+            guard !CRMEnhancements.isDuplicate(lead, in: leads) else { continue }
+            var example = lead
+            example.dealEvents.insert(DealEvent(type: .note, summary: "Example client loaded for demo"), at: 0)
+            leads.insert(example, at: 0)
+        }
+        saveLeads()
+        notifyGeofencingSync()
+    }
+
+    func removeExampleLeads(for userId: String) {
+        leads.removeAll { $0.ownerId == userId && ExampleData.isExampleLead($0) }
+        saveLeads()
+        notifyGeofencingSync()
+    }
+
+    func clearAllLeads(for userId: String) {
+        let removedIds = Set(leads.filter { $0.ownerId == userId }.map(\.id))
+        leads.removeAll { $0.ownerId == userId }
+        tasks.removeAll { removedIds.contains($0.leadId) }
+        saveLeads()
+        saveTasks()
+        notifyGeofencingSync()
+    }
+
+    private func removeBundledExampleLeadsIfNeeded(for userId: String) {
+        let migrationKey = "salescoach_removed_sample_leads_\(userId)"
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+        leads.removeAll { $0.ownerId == userId && ExampleData.isExampleLead($0) }
+        UserDefaults.standard.set(true, forKey: migrationKey)
+        saveLeads()
     }
 
     func loadTasks(for userId: String) {
@@ -65,7 +101,7 @@ final class CRMService {
         tasks.filter { $0.isDueToday }.sorted { $0.dueDate < $1.dueDate }
     }
 
-    func addLead(_ lead: Lead) -> Bool {
+    func addLead(_ lead: Lead, source: AuditSource = .manual, actorId: String? = nil) -> Bool {
         guard !CRMEnhancements.isDuplicate(lead, in: leads) else { return false }
         var newLead = lead
         if newLead.nextFollowUpDate == nil {
@@ -75,16 +111,38 @@ final class CRMService {
         leads.insert(newLead, at: 0)
         saveLeads()
         notifyGeofencingSync()
+        recordAudit?(AuditEntry(
+            entityType: .lead,
+            entityId: newLead.id,
+            entityLabel: newLead.name,
+            actorId: actorId ?? newLead.ownerId,
+            action: "lead.created",
+            summary: "Added \(newLead.name) to CRM",
+            source: source
+        ))
         return true
     }
 
-    func updateLead(_ lead: Lead) {
+    func updateLead(_ lead: Lead, source: AuditSource = .manual, actorId: String? = nil) {
         guard let index = leads.firstIndex(where: { $0.id == lead.id }) else { return }
+        let previous = leads[index]
         var updated = lead
         updated.updatedAt = .now
         leads[index] = updated
         saveLeads()
         notifyGeofencingSync()
+        let changes = CRMService.diffLead(previous: previous, updated: updated)
+        guard !changes.isEmpty else { return }
+        recordAudit?(AuditEntry(
+            entityType: .lead,
+            entityId: lead.id,
+            entityLabel: lead.name,
+            actorId: actorId ?? lead.ownerId,
+            action: "lead.updated",
+            summary: "Updated \(lead.name)",
+            source: source,
+            changes: changes
+        ))
     }
 
     func deleteLead(_ lead: Lead) {
@@ -127,9 +185,10 @@ final class CRMService {
         saveLeads()
     }
 
-    func moveLead(_ leadId: String, to stage: DealStage) {
+    func moveLead(_ leadId: String, to stage: DealStage, source: AuditSource = .manual, actorId: String? = nil) {
         guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
         let previous = leads[index].dealStage
+        let lead = leads[index]
         leads[index].dealStage = stage
         leads[index].dealEvents.insert(
             DealEvent(type: .stageChange, summary: "Moved from \(previous.rawValue) to \(stage.rawValue)"),
@@ -137,6 +196,16 @@ final class CRMService {
         )
         leads[index].updatedAt = .now
         saveLeads()
+        recordAudit?(AuditEntry(
+            entityType: .lead,
+            entityId: leadId,
+            entityLabel: lead.name,
+            actorId: actorId ?? lead.ownerId,
+            action: "deal.stage_changed",
+            summary: "\(lead.name): \(previous.rawValue) → \(stage.rawValue)",
+            source: source,
+            changes: [FieldChange(field: "stage", oldValue: previous.rawValue, newValue: stage.rawValue)]
+        ))
     }
 
     func updatePriority(for leadId: String, priority: LeadPriority) {
@@ -146,27 +215,46 @@ final class CRMService {
         saveLeads()
     }
 
-    func scheduleFollowUp(for leadId: String, date: Date) {
+    func scheduleFollowUp(for leadId: String, date: Date, source: AuditSource = .manual, actorId: String? = nil) {
         guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
+        let lead = leads[index]
         leads[index].nextFollowUpDate = date
+        leads[index].dealEvents.insert(
+            DealEvent(type: .followUpScheduled, summary: "Follow-up scheduled for \(date.formatted(date: .abbreviated, time: .omitted))"),
+            at: 0
+        )
         leads[index].updatedAt = .now
         saveLeads()
+        onCalendarFollowUp?("Follow up: \(lead.name)", date, lead.company)
+        recordAudit?(AuditEntry(
+            entityType: .lead,
+            entityId: leadId,
+            entityLabel: lead.name,
+            actorId: actorId ?? lead.ownerId,
+            action: "followup.scheduled",
+            summary: "Follow-up set for \(lead.name)",
+            source: source
+        ))
     }
 
-    func logContact(for leadId: String, type: LeadActivityType, summary: String) {
+    func logContact(for leadId: String, type: LeadActivityType, summary: String, source: AuditSource = .manual, actorId: String? = nil) {
         guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
+        let lead = leads[index]
         let activity = LeadActivity(type: type, summary: summary)
         leads[index].activities.insert(activity, at: 0)
         leads[index].lastContactedDate = .now
         leads[index].updatedAt = .now
-        let eventType: DealEventType = switch type {
-        case .call: .call
-        case .email: .email
-        case .visit: .visit
-        case .meeting, .note: .note
-        }
-        leads[index].dealEvents.insert(DealEvent(type: eventType, summary: summary), at: 0)
         saveLeads()
+        onContactLogged?()
+        recordAudit?(AuditEntry(
+            entityType: .lead,
+            entityId: leadId,
+            entityLabel: lead.name,
+            actorId: actorId ?? lead.ownerId,
+            action: "contact.logged",
+            summary: "\(type.rawValue): \(summary)",
+            source: source
+        ))
     }
 
     func applySmartFollowUp(to leadId: String) {
@@ -183,6 +271,29 @@ final class CRMService {
 
     func exportCSV() -> String {
         CRMEnhancements.exportCSV(leads: leads)
+    }
+
+    @discardableResult
+    func importCSV(_ csv: String, ownerId: String) -> CRMImportResult {
+        let rows = CRMEnhancements.parseCSV(csv)
+        guard !rows.isEmpty else {
+            return CRMImportResult(imported: 0, skipped: 0, duplicates: 0, errors: ["No valid rows found in file."])
+        }
+        var imported = 0, skipped = 0, duplicates = 0, errors: [String] = []
+        for row in rows {
+            var lead = row.makeLead(ownerId: ownerId)
+            if CRMEnhancements.isDuplicate(lead, in: leads) {
+                duplicates += 1
+                continue
+            }
+            leads.insert(lead, at: 0)
+            imported += 1
+        }
+        if imported > 0 {
+            saveLeads()
+            notifyGeofencingSync()
+        }
+        return CRMImportResult(imported: imported, skipped: skipped, duplicates: duplicates, errors: errors)
     }
 
     func revenueForecast() -> RevenueForecast {
@@ -251,16 +362,57 @@ final class CRMService {
         saveLeads()
     }
 
-    func markWon(_ leadId: String, finalValue: Double? = nil) {
-        guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
-        if let finalValue { leads[index].dealValue = finalValue }
-        leads[index].probabilityOfClosing = 100
-        moveLead(leadId, to: .won)
+    func markWon(_ leadId: String, finalValue: Double? = nil, source: AuditSource = .manual, actorId: String? = nil) {
+        closeOrder(
+            leadId: leadId,
+            finalValue: finalValue,
+            notes: "Deal marked won",
+            source: source,
+            actorId: actorId
+        )
     }
 
-    func markLost(_ leadId: String, reason: String) {
+    func closeOrder(
+        leadId: String,
+        finalValue: Double?,
+        notes: String,
+        source: AuditSource = .manual,
+        actorId: String? = nil
+    ) {
+        guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
+        let lead = leads[index]
+        let value = finalValue ?? lead.dealValue
+        if let finalValue { leads[index].dealValue = finalValue }
+        leads[index].probabilityOfClosing = 100
+        moveLead(leadId, to: .won, source: source, actorId: actorId)
+        let order = ClosedOrder(
+            leadId: leadId,
+            ownerId: lead.ownerId,
+            clientName: lead.name,
+            company: lead.company,
+            finalValue: value,
+            lineItems: value > 0 ? [OrderLineItem(name: lead.company.isEmpty ? lead.name : lead.company, unitPrice: value)] : [],
+            notes: notes,
+            source: source
+        )
+        let auditEntry = AuditEntry(
+            entityType: .order,
+            entityId: order.id,
+            entityLabel: lead.name,
+            actorId: actorId ?? lead.ownerId,
+            action: "order.closed",
+            summary: "Sale closed — \(lead.name) for \(Int(value))",
+            source: source,
+            changes: [FieldChange(field: "dealValue", oldValue: String(Int(lead.dealValue)), newValue: String(Int(value)))]
+        )
+        recordClosedOrder?(order, auditEntry)
+        onDealWon?()
+    }
+
+    func markLost(_ leadId: String, reason: String, source: AuditSource = .manual, actorId: String? = nil) {
         guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
         let previous = leads[index].dealStage
+        let lead = leads[index]
         leads[index].lostReason = reason
         leads[index].probabilityOfClosing = 0
         leads[index].dealStage = .lost
@@ -274,6 +426,15 @@ final class CRMService {
         )
         leads[index].updatedAt = .now
         saveLeads()
+        recordAudit?(AuditEntry(
+            entityType: .lead,
+            entityId: leadId,
+            entityLabel: lead.name,
+            actorId: actorId ?? lead.ownerId,
+            action: "deal.lost",
+            summary: "\(lead.name) marked lost",
+            source: source
+        ))
     }
 
     func companiesGrouped() -> [CompanyGroup] {
@@ -297,7 +458,12 @@ final class CRMService {
             let matchesSearch = search.isEmpty ||
                 lead.name.localizedCaseInsensitiveContains(search) ||
                 lead.company.localizedCaseInsensitiveContains(search) ||
-                lead.tags.contains { $0.localizedCaseInsensitiveContains(search) }
+                lead.email.localizedCaseInsensitiveContains(search) ||
+                lead.phone.localizedCaseInsensitiveContains(search) ||
+                lead.notes.localizedCaseInsensitiveContains(search) ||
+                lead.leadSource.localizedCaseInsensitiveContains(search) ||
+                lead.tags.contains { $0.localizedCaseInsensitiveContains(search) } ||
+                lead.activities.contains { $0.summary.localizedCaseInsensitiveContains(search) }
             let matchesStage = stage == nil || lead.dealStage == stage
             let matchesFilter: Bool = switch listFilter {
             case .all: true
@@ -435,85 +601,20 @@ final class CRMService {
         syncGeofencing?(leads.filter { $0.location.pinReminderEnabled && $0.location.hasCoordinates })
     }
 
-    static func sampleLeads(ownerId: String) -> [Lead] {
-        [
-            Lead(
-                ownerId: ownerId,
-                name: "Sarah Chen",
-                company: "TechFlow Inc",
-                phone: "555-0101",
-                email: "sarah@techflow.io",
-                dealValue: 45000,
-                dealStage: .qualified,
-                notes: "Interested in enterprise plan. Decision maker.",
-                lastContactedDate: Calendar.current.date(byAdding: .day, value: -3, to: .now),
-                nextFollowUpDate: Calendar.current.date(byAdding: .day, value: 2, to: .now),
-                probabilityOfClosing: 65,
-                aiRecommendedAction: "Send case study from similar SaaS company.",
-                priority: .hot,
-                contactIntel: ContactIntel(
-                    interests: "AI automation, scaling outbound",
-                    likes: "San Francisco Giants, craft coffee",
-                    kidsNames: "Emma (8), Noah (5)",
-                    conversationStarters: "Ask about their Series B hiring push"
-                ),
-                location: LeadLocation(
-                    address: "123 Market St",
-                    city: "San Francisco, CA",
-                    latitude: 37.7937,
-                    longitude: -122.3965,
-                    locationLabel: "TechFlow HQ",
-                    pinReminderEnabled: true
-                )
-            ),
-            Lead(
-                ownerId: ownerId,
-                name: "Marcus Johnson",
-                company: "BuildRight Co",
-                phone: "555-0102",
-                email: "marcus@buildright.com",
-                dealValue: 12000,
-                dealStage: .proposalSent,
-                notes: "Waiting on budget approval from CFO.",
-                lastContactedDate: Calendar.current.date(byAdding: .day, value: -7, to: .now),
-                nextFollowUpDate: Calendar.current.date(byAdding: .day, value: 1, to: .now),
-                probabilityOfClosing: 40,
-                aiRecommendedAction: "Follow up with ROI calculator for CFO.",
-                priority: .warm,
-                contactIntel: ContactIntel(
-                    likes: "Local basketball, weekend fishing",
-                    familyNotes: "Wife named Lisa, renovating their home"
-                ),
-                location: LeadLocation(
-                    address: "555 Bryant St",
-                    city: "San Francisco, CA",
-                    latitude: 37.7823,
-                    longitude: -122.3971,
-                    locationLabel: "BuildRight Office"
-                )
-            ),
-            Lead(
-                ownerId: ownerId,
-                name: "Emily Rodriguez",
-                company: "Growth Labs",
-                phone: "555-0103",
-                email: "emily@growthlabs.co",
-                dealValue: 78000,
-                dealStage: .negotiation,
-                notes: "Negotiating contract terms. Very engaged.",
-                lastContactedDate: Calendar.current.date(byAdding: .day, value: -1, to: .now),
-                nextFollowUpDate: Calendar.current.date(byAdding: .day, value: 3, to: .now),
-                probabilityOfClosing: 80,
-                aiRecommendedAction: "Schedule final contract review call.",
-                priority: .hot,
-                location: LeadLocation(
-                    address: "680 Folsom St",
-                    city: "San Francisco, CA",
-                    latitude: 37.7852,
-                    longitude: -122.3960,
-                    locationLabel: "Growth Labs"
-                )
-            )
-        ]
+    static func diffLead(previous: Lead, updated: Lead) -> [FieldChange] {
+        var changes: [FieldChange] = []
+        if previous.dealStage != updated.dealStage {
+            changes.append(FieldChange(field: "stage", oldValue: previous.dealStage.rawValue, newValue: updated.dealStage.rawValue))
+        }
+        if Int(previous.dealValue) != Int(updated.dealValue) {
+            changes.append(FieldChange(field: "dealValue", oldValue: String(Int(previous.dealValue)), newValue: String(Int(updated.dealValue))))
+        }
+        if previous.probabilityOfClosing != updated.probabilityOfClosing {
+            changes.append(FieldChange(field: "probability", oldValue: String(previous.probabilityOfClosing), newValue: String(updated.probabilityOfClosing)))
+        }
+        if previous.priority != updated.priority {
+            changes.append(FieldChange(field: "priority", oldValue: previous.priority.rawValue, newValue: updated.priority.rawValue))
+        }
+        return changes
     }
 }

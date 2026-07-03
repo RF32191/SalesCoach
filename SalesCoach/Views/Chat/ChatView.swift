@@ -44,7 +44,7 @@ struct ChatView: View {
             inputBar
         }
         .appBackground()
-        .navigationTitle("AI Sales Coach")
+        .navigationTitle("Team Sales Coach")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
@@ -114,18 +114,19 @@ struct ChatView: View {
             Image(systemName: "brain.head.profile.fill")
                 .font(.system(size: 48))
                 .foregroundStyle(AppTheme.electricBlue)
-            Text("Your AI Sales Coach")
+            Text("Team Sales Coach")
                 .font(.title3.bold())
                 .foregroundStyle(AppTheme.textPrimary)
-            Text("Ask me to write scripts, handle objections, improve pitches, or plan your closing strategy.")
+            Text("Log closed deals for your team, get coaching on objections, and celebrate wins together. Clients never need this app.")
                 .font(.subheadline)
                 .foregroundStyle(AppTheme.textSecondary)
                 .multilineTextAlignment(.center)
 
             VStack(spacing: 8) {
+                SuggestionChip(text: "Closed $8k with Acme Corp today") { send($0) }
+                SuggestionChip(text: "Just sold $12k to TechFlow") { send($0) }
                 SuggestionChip(text: "Help me handle price objections") { send($0) }
-                SuggestionChip(text: "Write a cold call opening") { send($0) }
-                SuggestionChip(text: "How do I close a hesitant buyer?") { send($0) }
+                SuggestionChip(text: "Write a win announcement for the team") { send($0) }
             }
         }
         .padding(.vertical, 32)
@@ -160,7 +161,7 @@ struct ChatView: View {
 
     private var inputBar: some View {
         HStack(spacing: 12) {
-            TextField("Ask your sales coach...", text: $messageText, axis: .vertical)
+            TextField("Log a sale or ask for coaching...", text: $messageText, axis: .vertical)
                 .lineLimit(1...4)
                 .padding(12)
                 .background(AppTheme.navyCard)
@@ -200,7 +201,17 @@ struct ChatView: View {
         messageText = ""
         appState.subscription.recordChatMessage()
         Task {
-            await appState.chat.sendMessage(trimmed, userId: appState.auth.currentUser?.id ?? "")
+            await appState.chat.sendMessage(
+                trimmed,
+                userId: appState.auth.currentUser?.id ?? "",
+                repName: appState.auth.currentUser?.fullName ?? "Rep",
+                teamId: appState.auth.currentUser?.teamId ?? "solo",
+                teamMembers: appState.team.members,
+                crm: appState.crm,
+                audit: appState.audit,
+                teamSales: appState.teamSales,
+                gamification: appState.gamification
+            )
         }
     }
 }
@@ -214,12 +225,27 @@ struct ChatBubble: View {
         HStack {
             if isUser { Spacer(minLength: 48) }
 
-            Text(message.content)
-                .font(.subheadline)
-                .foregroundStyle(isUser ? .white : AppTheme.textPrimary)
-                .padding(12)
-                .background(isUser ? AppTheme.electricBlue : AppTheme.navyCard)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
+            VStack(alignment: isUser ? .trailing : .leading, spacing: 8) {
+                Text(message.content)
+                    .font(.subheadline)
+                    .foregroundStyle(isUser ? .white : AppTheme.textPrimary)
+                    .padding(12)
+                    .background(isUser ? AppTheme.electricBlue : AppTheme.navyCard)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+
+                if let actions = message.loggedActions, !actions.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(actions, id: \.self) { action in
+                            Label(action, systemImage: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.successGreen)
+                        }
+                    }
+                    .padding(10)
+                    .background(AppTheme.successGreen.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+            }
 
             if !isUser { Spacer(minLength: 48) }
         }

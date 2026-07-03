@@ -36,11 +36,13 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var role: ChatRole
     var content: String
     var timestamp: Date
+    var loggedActions: [String]?
 
-    init(id: String = UUID().uuidString, role: ChatRole, content: String, timestamp: Date = .now) {
+    init(id: String = UUID().uuidString, role: ChatRole, content: String, timestamp: Date = .now, loggedActions: [String]? = nil) {
         self.id = id
         self.role = role
         self.content = content
         self.timestamp = timestamp
+        self.loggedActions = loggedActions
     }
 }

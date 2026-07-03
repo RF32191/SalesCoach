@@ -343,7 +343,7 @@ struct ProximityBriefingView: View {
     private var dealSection: some View {
         VStack(spacing: 10) {
             InfoRow(label: "Stage", value: lead.dealStage.rawValue)
-            InfoRow(label: "Next step", value: lead.aiRecommendedAction)
+            InfoRow(label: "Next step", value: lead.displayAIAction)
             if let followUp = lead.nextFollowUpDate {
                 InfoRow(label: "Follow-up", value: followUp.formatted(date: .abbreviated, time: .omitted))
             }

@@ -2,10 +2,27 @@ import SwiftUI
 
 struct MoreView: View {
     @Environment(AppState.self) private var appState
+    @AppStorage("salescoach_onboarding_complete") private var onboardingComplete = false
+    @State private var showOnboardingTour = false
 
     var body: some View {
         NavigationStack {
             List {
+                Section("Help") {
+                    NavigationLink {
+                        ProductGuideView()
+                    } label: {
+                        Label("Product Guide", systemImage: "book.fill")
+                    }
+
+                    Button {
+                        onboardingComplete = false
+                        showOnboardingTour = true
+                    } label: {
+                        Label("Replay App Tour", systemImage: "arrow.counterclockwise")
+                    }
+                }
+
                 Section {
                     NavigationLink {
                         LeaderboardView()
@@ -55,12 +72,24 @@ struct MoreView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
             #endif
+            .overlay {
+                if showOnboardingTour {
+                    Color.black.opacity(0.55).ignoresSafeArea()
+                    OnboardingTourView(isPresented: $showOnboardingTour)
+                }
+            }
+            .onChange(of: showOnboardingTour) { _, isShowing in
+                if !isShowing { onboardingComplete = true }
+            }
         }
     }
 }
 
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
+    @State private var showClearDataConfirm = false
+    @State private var showRemoveExamplesConfirm = false
+    @State private var dataMessage: String?
 
     private var aiBackendStatus: String {
         if AppConfig.isRailwayConfigured { return "Railway" }
@@ -92,6 +121,28 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Data") {
+                Button {
+                    appState.loadExampleData()
+                    dataMessage = "Example clients, team members, drills, and playbooks loaded."
+                } label: {
+                    Label("Load Example Data", systemImage: "tray.and.arrow.down.fill")
+                }
+
+                Button {
+                    appState.removeExampleData()
+                    dataMessage = "Example data removed. Your real data is unchanged."
+                } label: {
+                    Label("Remove Example Data Only", systemImage: "trash.slash.fill")
+                }
+
+                Button(role: .destructive) {
+                    showClearDataConfirm = true
+                } label: {
+                    Label("Clear All Local CRM Data", systemImage: "trash.fill")
+                }
+            }
+
             Section("API Configuration") {
                 HStack {
                     Text("Supabase")
@@ -107,6 +158,14 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Help") {
+                NavigationLink {
+                    ProductGuideView()
+                } label: {
+                    Label("Product Guide", systemImage: "book.fill")
+                }
+            }
+
             Section("About") {
                 LabeledContent("Version", value: "1.0.0")
                 LabeledContent("App", value: "Sales Coach")
@@ -118,5 +177,19 @@ struct SettingsView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .alert("Clear all CRM data?", isPresented: $showClearDataConfirm) {
+            Button("Clear Everything", role: .destructive) {
+                appState.clearAllLocalCRMData()
+                dataMessage = "All clients and tasks removed from this device."
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This deletes all your leads and tasks. Training history and account settings are kept.")
+        }
+        .alert("Data Updated", isPresented: .constant(dataMessage != nil)) {
+            Button("OK") { dataMessage = nil }
+        } message: {
+            Text(dataMessage ?? "")
+        }
     }
 }

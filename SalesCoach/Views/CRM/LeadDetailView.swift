@@ -19,6 +19,7 @@ struct LeadDetailView: View {
             VStack(spacing: 16) {
                 headerSection
                 dealHealthSection
+                predictiveClosingSection
                 CRMQuickActionsBar(
                     lead: lead,
                     onCall: { dialLead() },
@@ -33,6 +34,7 @@ struct LeadDetailView: View {
                 dealCoachingSection
                 LeadTasksSection(leadId: lead.id)
                 timelineSection
+                auditHistorySection
                 ContactIntelForm(intel: $lead.contactIntel)
                 LeadLocationSection(location: $lead.location)
                 if lead.location.hasCoordinates,
@@ -121,13 +123,35 @@ struct LeadDetailView: View {
                 Text(lead.dealHealthLabel)
                     .font(.subheadline.bold())
                     .foregroundStyle(AppTheme.textSecondary)
-                Text("Based on probability, priority, and follow-up timing")
+                Text("Based on probability, engagement, activity, and follow-up timing")
                     .font(.caption2)
                     .foregroundStyle(AppTheme.textMuted)
             }
             Spacer()
         }
         .cardStyle()
+    }
+
+    private var predictiveClosingSection: some View {
+        let insight = lead.predictedCloseInsight
+        return VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Predictive Closing")
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                PredictiveMetric(label: "Close Chance", value: "\(insight.closeProbability)%", color: AppTheme.successGreen)
+                PredictiveMetric(label: "Expected Rev", value: formatCurrency(insight.expectedRevenue), color: AppTheme.tealGreen)
+                PredictiveMetric(label: "Est. Days", value: "\(insight.estimatedDaysToClose)d", color: AppTheme.electricBlueBright)
+                PredictiveMetric(label: "Risk", value: insight.riskLevel, color: insight.riskLevel == "Low" ? AppTheme.successGreen : AppTheme.warningOrange)
+            }
+            Text(insight.explanation)
+                .font(.caption)
+                .foregroundStyle(AppTheme.textMuted)
+        }
+        .cardStyle()
+    }
+
+    private func formatCurrency(_ value: Double) -> String {
+        if value >= 1000 { return String(format: "$%.0fK", value / 1000) }
+        return "$\(Int(value))"
     }
 
     private var dealCoachingSection: some View {
@@ -219,6 +243,41 @@ struct LeadDetailView: View {
             }
         }
         .cardStyle()
+    }
+
+    private var auditHistorySection: some View {
+        let entries = appState.audit.entries(for: lead.id)
+        return Group {
+            if !entries.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("Audit History").font(.headline).foregroundStyle(AppTheme.textPrimary)
+                        Spacer()
+                        NavigationLink("View All") { OrderAuditView() }
+                            .font(.caption.bold())
+                            .foregroundStyle(AppTheme.tealGreen)
+                    }
+                    ForEach(entries.prefix(5)) { entry in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .foregroundStyle(AppTheme.warningOrange)
+                                .frame(width: 20)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.summary).font(.caption).foregroundStyle(AppTheme.textPrimary)
+                                HStack {
+                                    Text(entry.timestamp.formatted(date: .abbreviated, time: .shortened))
+                                    Text("·")
+                                    Text(entry.source.rawValue)
+                                }
+                                .font(.caption2)
+                                .foregroundStyle(AppTheme.textMuted)
+                            }
+                        }
+                    }
+                }
+                .cardStyle()
+            }
+        }
     }
 
     private func loadPreCallBriefing() {
@@ -319,7 +378,7 @@ struct LeadDetailView: View {
             if isUpdatingAction {
                 ProgressView().tint(AppTheme.electricBlue)
             } else {
-                Text(lead.aiRecommendedAction)
+                Text(lead.displayAIAction)
                     .font(.subheadline)
                     .foregroundStyle(AppTheme.textSecondary)
             }
@@ -476,6 +535,27 @@ struct InfoRow: View {
     }
 }
 
+struct PredictiveMetric: View {
+    let label: String
+    let value: String
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(AppTheme.textMuted)
+            Text(value)
+                .font(.subheadline.bold())
+                .foregroundStyle(color)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(AppTheme.navyElevated.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+}
+
 struct AddLeadView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -548,6 +628,7 @@ struct AddLeadView: View {
             appState.teamGoals.recordNewLead()
             if let userId = appState.auth.currentUser?.id {
                 appState.teamGoals.save(for: userId)
+                appState.gamification.record(.leadAdded, userId: userId)
             }
             dismiss()
         } else {

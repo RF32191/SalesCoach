@@ -81,3 +81,42 @@ struct CompanyGroup: Identifiable, Equatable {
     var totalValue: Double { leads.reduce(0) { $0 + $1.dealValue } }
     var activeCount: Int { leads.filter { $0.dealStage.isActivePipeline }.count }
 }
+
+struct CRMImportResult: Equatable {
+    let imported: Int
+    let skipped: Int
+    let duplicates: Int
+    let errors: [String]
+}
+
+struct CSVLeadRow {
+    let fields: [String: String]
+
+    func makeLead(ownerId: String) -> Lead {
+        let stage = DealStage.allCases.first {
+            $0.rawValue.localizedCaseInsensitiveContains(fields["stage"] ?? "")
+        } ?? .newLead
+        let priority = LeadPriority.allCases.first {
+            $0.rawValue.localizedCaseInsensitiveContains(fields["priority"] ?? "")
+        } ?? .warm
+        let value = Double(fields["value"]?.filter { $0.isNumber || $0 == "." } ?? "") ?? 0
+        let probability = Int(fields["probability"]?.filter(\.isNumber) ?? "") ?? 20
+        let followUp: Date? = {
+            guard let raw = fields["next follow-up"] ?? fields["nextfollowup"], !raw.isEmpty else { return nil }
+            return ISO8601DateFormatter().date(from: raw) ?? ISO8601DateFormatter().date(from: raw + "T12:00:00Z")
+        }()
+        return Lead(
+            ownerId: ownerId,
+            name: fields["name"] ?? "Imported Contact",
+            company: fields["company"] ?? "",
+            phone: fields["phone"] ?? "",
+            email: fields["email"] ?? "",
+            dealValue: value,
+            dealStage: stage,
+            nextFollowUpDate: followUp,
+            probabilityOfClosing: min(100, max(0, probability)),
+            leadSource: fields["source"] ?? "CSV Import",
+            priority: priority
+        )
+    }
+}

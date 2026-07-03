@@ -18,8 +18,16 @@ struct LeaderboardView: View {
 
             ScrollView {
                 LazyVStack(spacing: 12) {
-                    ForEach(currentEntries) { entry in
-                        LeaderboardRow(entry: entry)
+                    if currentEntries.isEmpty {
+                        EmptyStateView(
+                            icon: "trophy",
+                            title: "No scores yet",
+                            message: "Complete training roleplays to appear on the leaderboard."
+                        )
+                    } else {
+                        ForEach(currentEntries) { entry in
+                            LeaderboardRow(entry: entry)
+                        }
                     }
                 }
                 .padding(.horizontal)
@@ -57,7 +65,13 @@ struct LeaderboardView: View {
         case 0:
             return [LeaderboardEntry(userId: user.id, name: user.fullName, value: avgScore, subtitle: "Avg Score", rank: 1)]
         case 1:
-            return [LeaderboardEntry(userId: user.id, name: user.fullName, value: max(0, avgScore - 60), subtitle: "Points Improved", rank: 1)]
+            let improved = appState.training.sessions
+                .filter { $0.userId == user.id }
+                .compactMap(\.scoreReport?.overallScore)
+            let delta = improved.count >= 2 ? (improved.first ?? 0) - (improved.last ?? 0) : 0
+            return improved.isEmpty ? [] : [
+                LeaderboardEntry(userId: user.id, name: user.fullName, value: max(0, delta), subtitle: "Points Improved", rank: 1)
+            ]
         case 2:
             return [LeaderboardEntry(userId: user.id, name: user.fullName, value: roleplays, subtitle: "Roleplays", rank: 1)]
         default:

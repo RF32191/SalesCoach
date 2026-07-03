@@ -171,11 +171,26 @@ struct CRMView: View {
             }
 
             if filteredLeads.isEmpty {
-                EmptyStateView(
-                    icon: "person.crop.rectangle.stack",
-                    title: "No clients found",
-                    message: "Add your first client or adjust your filters."
-                )
+                VStack(spacing: 12) {
+                    EmptyStateView(
+                        icon: "person.crop.rectangle.stack",
+                        title: "No clients yet",
+                        message: "Add your first client or load example data from Settings to explore the CRM."
+                    )
+                    Button {
+                        appState.loadExampleData()
+                    } label: {
+                        Label("Load Example Clients", systemImage: "tray.and.arrow.down")
+                            .font(.subheadline.bold())
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .foregroundStyle(AppTheme.electricBlueBright)
+                            .background(AppTheme.electricBlueBright.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal)
+                }
                 .listRowBackground(Color.clear)
             }
         }

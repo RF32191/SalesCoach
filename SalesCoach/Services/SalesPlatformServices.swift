@@ -68,15 +68,47 @@ final class TeamGoalsService {
            let stored = try? JSONDecoder().decode([ManagerDrill].self, from: data) {
             drills = stored
         } else {
-            drills = Self.defaultDrills()
+            drills = []
         }
 
         if let data = UserDefaults.standard.data(forKey: "\(playbooksKey)_\(userId)"),
            let stored = try? JSONDecoder().decode([PlaybookEntry].self, from: data) {
             playbooks = stored
         } else {
-            playbooks = Self.defaultPlaybooks()
+            playbooks = []
         }
+
+        removeBundledExampleContentIfNeeded(for: userId)
+    }
+
+    func loadExampleContent(for userId: String) {
+        if drills.isEmpty { drills = ExampleData.exampleDrills() }
+        if playbooks.isEmpty { playbooks = ExampleData.examplePlaybooks() }
+        save(for: userId)
+    }
+
+    func clearExampleContent(for userId: String) {
+        drills = []
+        playbooks = []
+        save(for: userId)
+    }
+
+    private func removeBundledExampleContentIfNeeded(for userId: String) {
+        let migrationKey = "salescoach_removed_sample_goals_\(userId)"
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+
+        let exampleDrillTitles = Set(ExampleData.exampleDrills().map(\.title))
+        if !drills.isEmpty, Set(drills.map(\.title)) == exampleDrillTitles {
+            drills = []
+        }
+
+        let examplePlaybookTitles = Set(ExampleData.examplePlaybooks().map(\.title))
+        if !playbooks.isEmpty, Set(playbooks.map(\.title)) == examplePlaybookTitles {
+            playbooks = []
+        }
+
+        UserDefaults.standard.set(true, forKey: migrationKey)
+        save(for: userId)
     }
 
     func save(for userId: String) {
@@ -114,20 +146,6 @@ final class TeamGoalsService {
                 weekStart: calendar.startOfDay(for: .now)
             )
         }
-    }
-
-    static func defaultDrills() -> [ManagerDrill] {
-        [
-            ManagerDrill(title: "Price objection drill", scenario: .objectionHandling, personality: .budgetConscious, dueDate: Calendar.current.date(byAdding: .day, value: 3, to: .now)!),
-            ManagerDrill(title: "Executive pitch", scenario: .closing, personality: .busyExecutive, dueDate: Calendar.current.date(byAdding: .day, value: 5, to: .now)!)
-        ]
-    }
-
-    static func defaultPlaybooks() -> [PlaybookEntry] {
-        [
-            PlaybookEntry(title: "Feel-Felt-Found", content: "I understand how you feel. Others felt the same until they found...", category: "Objections"),
-            PlaybookEntry(title: "Trial Close", content: "On a scale of 1-10, how ready are you? What gets you to a 10?", category: "Closing")
-        ]
     }
 }
 
@@ -240,6 +258,38 @@ enum CRMEnhancements {
             ].map { "\"\($0.replacingOccurrences(of: "\"", with: "'"))\"" }.joined(separator: ","))
         }
         return rows.joined(separator: "\n")
+    }
+
+    static func parseCSV(_ csv: String) -> [CSVLeadRow] {
+        let lines = csv.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard lines.count >= 2 else { return [] }
+        let headers = parseCSVLine(lines[0]).map { $0.lowercased() }
+        return lines.dropFirst().compactMap { line in
+            let values = parseCSVLine(line)
+            guard !values.isEmpty else { return nil }
+            var dict: [String: String] = [:]
+            for (index, header) in headers.enumerated() where index < values.count {
+                dict[header] = values[index]
+            }
+            return CSVLeadRow(fields: dict)
+        }
+    }
+
+    private static func parseCSVLine(_ line: String) -> [String] {
+        var result: [String] = []
+        var current = ""
+        var inQuotes = false
+        for char in line {
+            if char == "\"" { inQuotes.toggle() }
+            else if char == "," && !inQuotes {
+                result.append(current.trimmingCharacters(in: .whitespaces))
+                current = ""
+            } else {
+                current.append(char)
+            }
+        }
+        result.append(current.trimmingCharacters(in: .whitespaces))
+        return result
     }
 
     static func businessHoursHint(for category: SalesCategory?) -> String {

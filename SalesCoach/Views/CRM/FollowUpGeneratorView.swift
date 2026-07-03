@@ -4,7 +4,7 @@ struct FollowUpGeneratorView: View {
     @Environment(\.dismiss) private var dismiss
     let lead: Lead
 
-    @State private var selectedType: FollowUpType = .email
+    @State private var selectedType: FollowUpType = .followUpEmail
     @State private var generatedContent = ""
     @State private var isGenerating = false
 
@@ -16,7 +16,7 @@ struct FollowUpGeneratorView: View {
                         Label(type.rawValue, systemImage: type.icon).tag(type)
                     }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
                 .padding(.horizontal)
 
                 if isGenerating {

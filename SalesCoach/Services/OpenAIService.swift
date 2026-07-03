@@ -25,6 +25,69 @@ final class OpenAIService {
     Use bullet points when listing steps. Never be generic—give specific language they can use on calls.
     """
 
+    private let teamSalesPrompt = """
+    This is an internal team sales log — reps announce closed deals to their sales team. Clients do NOT use this app. \
+    When the user reports a closed sale or won deal, include a JSON action block at the END of your response:
+    <!--ACTIONS
+    {"reply":"your visible reply","actions":[{"type":"logSale","leadMatch":"Client or Company Name","dealValue":5000,"summary":"optional notes"}]}
+    -->
+    Only use action type logSale. Extract client/account name and dollar amount. Do NOT create leads, log calls, or schedule follow-ups from chat.
+    """
+
+    func chatWithTeamSales(
+        messages: [ChatMessage],
+        repName: String,
+        teamMembers: [TeamMember],
+        leads: [Lead]
+    ) async throws -> ChatCRMResponse {
+        let teamContext = teamMembers.prefix(8).map { "- \($0.fullName)" }.joined(separator: "\n")
+        let leadContext = leads.prefix(8).map {
+            "- \($0.name) @ \($0.company.isEmpty ? "no company" : $0.company)"
+        }.joined(separator: "\n")
+
+        let systemPrompt = coachSystemPrompt + "\n" + teamSalesPrompt
+            + "\n\nRep logging sale: \(repName)"
+            + "\nTeam members:\n" + (teamContext.isEmpty ? "(just you for now)" : teamContext)
+            + "\n\nKnown CRM accounts (optional match):\n" + (leadContext.isEmpty ? "(none)" : leadContext)
+
+        let apiMessages: [[String: String]] = [
+            ["role": "system", "content": systemPrompt]
+        ] + messages.map { ["role": $0.role.rawValue, "content": $0.content] }
+
+        let raw: String
+        if AppConfig.isRailwayConfigured {
+            raw = try await requestRailwayTeamSalesChat(
+                messages: messages,
+                repName: repName,
+                teamMembers: teamMembers,
+                leads: leads
+            )
+        } else if AppConfig.isOpenAIConfigured {
+            raw = try await requestCompletion(messages: apiMessages)
+        } else {
+            let last = messages.last?.content ?? ""
+            let actions = SalesActionParser.parseTeamSale(from: last, leads: leads)
+            return ChatCRMResponse(reply: mockChatResponse(for: last), actions: actions, actionResults: [])
+        }
+
+        if let payload = SalesActionParser.parseFromAIResponse(raw) {
+            let visible = raw.components(separatedBy: "<!--ACTIONS").first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? payload.reply
+            return ChatCRMResponse(reply: visible.isEmpty ? payload.reply : visible, actions: payload.actions, actionResults: [])
+        }
+
+        let last = messages.last?.content ?? ""
+        return ChatCRMResponse(
+            reply: raw,
+            actions: SalesActionParser.parseTeamSale(from: last, leads: leads),
+            actionResults: []
+        )
+    }
+
+    /// Legacy alias — use chatWithTeamSales.
+    func chatWithCRMActions(messages: [ChatMessage], leads: [Lead]) async throws -> ChatCRMResponse {
+        try await chatWithTeamSales(messages: messages, repName: "Rep", teamMembers: [], leads: leads)
+    }
+
     func chat(messages: [ChatMessage]) async throws -> String {
         let apiMessages: [[String: String]] = [
             ["role": "system", "content": coachSystemPrompt]
@@ -432,6 +495,40 @@ final class OpenAIService {
         return content
     }
 
+    private func requestRailwayTeamSalesChat(
+        messages: [ChatMessage],
+        repName: String,
+        teamMembers: [TeamMember],
+        leads: [Lead]
+    ) async throws -> String {
+        let payload: [[String: String]] = messages.map { ["role": $0.role.rawValue, "content": $0.content] }
+        let teamPayload = teamMembers.prefix(8).map { ["name": $0.fullName] as [String: Any] }
+        let leadPayload = leads.prefix(8).map { [
+            "name": $0.name,
+            "company": $0.company
+        ] as [String: Any] }
+        let json = try await postRailway(path: "chat/team-sales", body: [
+            "messages": payload,
+            "repName": repName,
+            "teamMembers": teamPayload,
+            "leads": leadPayload
+        ])
+        if let reply = json["reply"] as? String, let actions = json["actions"] as? [[String: Any]], !actions.isEmpty {
+            let encoded = (try? JSONSerialization.data(withJSONObject: ["reply": reply, "actions": actions])) ?? Data()
+            let actionBlock = String(data: encoded, encoding: .utf8) ?? ""
+            return reply + "\n<!--ACTIONS\n" + actionBlock + "\n-->"
+        }
+        guard let content = json["content"] as? String ?? json["reply"] as? String else {
+            throw OpenAIError.invalidResponse
+        }
+        recordTokens(from: json, fallbackInput: messages.map(\.content).joined(), fallbackOutput: content)
+        return content
+    }
+
+    private func requestRailwayCRMChat(messages: [ChatMessage], leads: [Lead]) async throws -> String {
+        try await requestRailwayTeamSalesChat(messages: messages, repName: "Rep", teamMembers: [], leads: leads)
+    }
+
     private func requestRailwayRoleplayTurn(
         scenario: TrainingScenario,
         personality: CustomerPersonality,
@@ -512,7 +609,7 @@ final class OpenAIService {
         ])
         return parsePreCallBriefingJSON(response) ?? PreCallBriefing(
             openingLine: "Hi \(lead.name), thanks for taking my call.",
-            keyPoints: [lead.aiRecommendedAction],
+            keyPoints: [lead.displayAIAction],
             questionsToAsk: ["What's your timeline?"],
             closeLine: "Can we schedule next steps?",
             personalHooks: lead.contactIntel.briefingFacts.map { $0.value }
@@ -531,7 +628,7 @@ final class OpenAIService {
         return PostVisitDebrief(
             whatWentWell: ["Engaged the contact", "Confirmed next steps"],
             improvements: ["Ask more discovery questions"],
-            nextStep: lead.aiRecommendedAction,
+            nextStep: lead.displayAIAction,
             practicePrompt: "Practice objection handling for \(lead.company)"
         )
     }
@@ -541,7 +638,8 @@ final class OpenAIService {
             let json = try await postRailway(path: "training/analyze-call", body: ["transcript": transcript])
             return parseCallAnalysis(json)
         }
-        return CallAnalysisResult(
+        return CallAnalysisResult.analyzeLocal(
+            transcript: transcript,
             talkRatioPercent: 58,
             questionsAsked: transcript.filter { $0 == "?" }.count,
             fillerWordCount: 3,
@@ -578,7 +676,9 @@ final class OpenAIService {
     }
 
     private func parseCallAnalysis(_ json: [String: Any]) -> CallAnalysisResult {
-        CallAnalysisResult(
+        let transcript = json["transcript"] as? String ?? ""
+        return CallAnalysisResult.analyzeLocal(
+            transcript: transcript,
             talkRatioPercent: json["talkRatioPercent"] as? Int ?? 50,
             questionsAsked: json["questionsAsked"] as? Int ?? 0,
             fillerWordCount: json["fillerWordCount"] as? Int ?? 0,
@@ -881,7 +981,19 @@ final class OpenAIService {
         switch type {
         case .text:
             return "Hi \(lead.name), following up on our conversation about \(lead.company). I have a few ideas that could help with your current goals—do you have 10 minutes this week?"
-        case .email:
+        case .coldEmail:
+            return """
+            Subject: Idea for \(lead.company)
+
+            Hi \(lead.name),
+
+            I work with \(lead.leadSource.isEmpty ? "teams like yours" : lead.leadSource) and noticed an opportunity to improve outcomes at \(lead.company).
+
+            Open to a 10-minute intro call this week?
+
+            Best regards
+            """
+        case .followUpEmail:
             return """
             Subject: Quick follow-up for \(lead.company)
 
@@ -892,6 +1004,38 @@ final class OpenAIService {
             Would you be open to a brief call this week to explore next steps?
 
             Best regards
+            """
+        case .meetingConfirm:
+            return """
+            Subject: Confirming our meeting — \(lead.company)
+
+            Hi \(lead.name),
+
+            Looking forward to our conversation. I'll come prepared with ideas tailored to \(lead.company)'s priorities.
+
+            Please reply to confirm the time still works for you.
+            """
+        case .proposalEmail:
+            return """
+            Subject: Proposal for \(lead.company)
+
+            Hi \(lead.name),
+
+            As discussed, I've attached a proposal outlining scope, pricing, and timeline for \(lead.company).
+
+            Happy to walk through any questions on a quick call.
+            """
+        case .thankYou:
+            return "Hi \(lead.name), thank you for your time today. I appreciated learning about \(lead.company)'s goals and will send a summary of next steps shortly."
+        case .renewal:
+            return """
+            Subject: Renewal discussion — \(lead.company)
+
+            Hi \(lead.name),
+
+            Your renewal window is approaching. I'd love to review results so far and ensure the plan still fits \(lead.company)'s needs.
+
+            Can we schedule 20 minutes this week?
             """
         case .callScript:
             return """

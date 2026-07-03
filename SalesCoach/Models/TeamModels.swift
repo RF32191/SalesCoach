@@ -58,8 +58,13 @@ struct LeaderboardEntry: Identifiable, Equatable {
 }
 
 enum FollowUpType: String, CaseIterable, Identifiable {
+    case coldEmail = "Cold Email"
+    case followUpEmail = "Follow-Up Email"
     case text = "Follow-Up Text"
-    case email = "Follow-Up Email"
+    case meetingConfirm = "Meeting Confirm"
+    case proposalEmail = "Proposal Email"
+    case thankYou = "Thank You"
+    case renewal = "Renewal Email"
     case callScript = "Call Script"
     case closingMessage = "Closing Message"
     case objectionResponse = "Objection Response"
@@ -68,8 +73,9 @@ enum FollowUpType: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
+        case .coldEmail: "envelope.badge.fill"
+        case .followUpEmail, .proposalEmail, .renewal, .thankYou, .meetingConfirm: "envelope.fill"
         case .text: "message.fill"
-        case .email: "envelope.fill"
         case .callScript: "phone.fill"
         case .closingMessage: "checkmark.seal.fill"
         case .objectionResponse: "bubble.left.and.exclamationmark.bubble.right.fill"

@@ -57,6 +57,10 @@ struct ScoringReportView: View {
                     icon: "doc.text.fill",
                     items: report.scriptSuggestions
                 )
+
+                if !session.transcript.isEmpty {
+                    callReplaySection
+                }
             }
             .padding()
         }
@@ -65,6 +69,37 @@ struct ScoringReportView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+    }
+
+    private var callReplaySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Call Replay")
+            Text("Review the conversation — great moments and coaching opportunities highlighted.")
+                .font(.caption)
+                .foregroundStyle(AppTheme.textSecondary)
+
+            ForEach(session.transcript) { entry in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(entry.speaker)
+                            .font(.caption.bold())
+                            .foregroundStyle(entry.speaker == "You" ? AppTheme.electricBlueBright : AppTheme.tealGreen)
+                        Spacer()
+                        Text(entry.timestamp.formatted(date: .omitted, time: .shortened))
+                            .font(.caption2)
+                            .foregroundStyle(AppTheme.textMuted)
+                    }
+                    Text(entry.text)
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.textPrimary)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(entry.speaker == "You" ? AppTheme.electricBlueBright.opacity(0.1) : AppTheme.navyElevated.opacity(0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+        }
+        .cardStyle()
     }
 
     private var scoreLabel: String {

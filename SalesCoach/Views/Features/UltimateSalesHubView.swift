@@ -32,10 +32,15 @@ struct UltimateSalesHubView: View {
                 section("CRM Intelligence") {
                     hubLink("Revenue Forecast", "Weighted pipeline projections", "chart.line.uptrend.xyaxis", AppTheme.successGreen) { RevenueForecastView() }
                     hubLink("Activity Goals", "Weekly calls, visits, and new leads", "target", AppTheme.warningOrange) { ActivityGoalsView() }
-                    hubLink("Export CRM", "Download CSV backup", "square.and.arrow.up", AppTheme.electricBlueBright) { CRMExportView() }
+                    hubLink("Import / Export", "CSV backup and bulk lead import", "arrow.up.arrow.down.circle.fill", AppTheme.tealGreen) { CRMDataView() }
+                    hubLink("Order Audit Log", "Closed sales and full change history", "list.bullet.rectangle.portrait.fill", AppTheme.successGreen) { OrderAuditView() }
+                    hubLink("Proposal Generator", "AI proposals with PDF export", "doc.richtext.fill", AppTheme.electricBlueBright) { ProposalGeneratorView() }
+                    hubLink("Business Card Scan", "Capture contacts from cards", "camera.viewfinder", AppTheme.electricBlueBright) { BusinessCardScanView() }
+                    hubLink("Automations", "Workflow templates for leads and deals", "arrow.triangle.branch", AppTheme.warningOrange) { AutomationWorkflowsView() }
                 }
 
                 section("Team Command") {
+                    hubLink("Manager Report", "AI weekly coaching digest", "doc.text.magnifyingglass", AppTheme.electricBlueBright) { ManagerReportView() }
                     hubLink("Manager Drills", "Assigned training from your manager", "list.bullet.clipboard.fill", AppTheme.dangerRed) { ManagerDrillsView() }
                     hubLink("Team Playbooks", "Shared winning scripts", "books.vertical.fill", AppTheme.electricBlue) { PlaybooksView() }
                     hubLink("Integrations", "HubSpot, Salesforce, Calendar", "link.circle.fill", AppTheme.textMuted) { IntegrationsView() }
@@ -221,10 +226,23 @@ struct CallAnalysisView: View {
                 }
                 .disabled(transcript.isEmpty || isAnalyzing)
                 if let result {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 12) {
                         Text("Score: \(result.overallScore)").font(.title2.bold())
                         Text("Talk ratio: \(result.talkRatioPercent)% · Questions: \(result.questionsAsked) · Fillers: \(result.fillerWordCount)")
                             .font(.caption)
+                            .foregroundStyle(AppTheme.textSecondary)
+
+                        SectionHeader(title: "Emotional Intelligence")
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                            EQChip(label: "Confidence", value: result.confidenceScore)
+                            EQChip(label: "Empathy", value: result.empathyScore)
+                            EQChip(label: "Energy", value: result.energyScore)
+                            EQChip(label: "Professionalism", value: result.professionalismScore)
+                        }
+                        Text("Pacing: \(result.pacingLabel)")
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.tealGreen)
+
                         ForEach(result.strengths, id: \.self) { Label($0, systemImage: "plus.circle.fill") }
                         ForEach(result.improvements, id: \.self) { Label($0, systemImage: "arrow.up.circle.fill") }
                     }
@@ -235,6 +253,26 @@ struct CallAnalysisView: View {
         }
         .appBackground()
         .navigationTitle("Call Analysis")
+    }
+}
+
+private struct EQChip: View {
+    let label: String
+    let value: Int
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Text("\(value)")
+                .font(.headline.bold())
+                .foregroundStyle(AppTheme.electricBlueBright)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(AppTheme.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(8)
+        .background(AppTheme.navyElevated.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -454,55 +492,41 @@ struct PlaybooksView: View {
 }
 
 struct IntegrationsView: View {
+    @Environment(AppState.self) private var appState
     @AppStorage("integration_hubspot") private var hubspot = false
     @AppStorage("integration_salesforce") private var salesforce = false
 
     var body: some View {
         List {
-            ForEach(IntegrationProvider.allCases) { provider in
-                HStack {
-                    Label(provider.rawValue, systemImage: provider.icon)
-                    Spacer()
-                    Text("Coming Soon").font(.caption).foregroundStyle(AppTheme.textMuted)
+            Section("Connected") {
+                Toggle(isOn: Binding(
+                    get: { appState.calendar.syncEnabled },
+                    set: { appState.calendar.syncEnabled = $0 }
+                )) {
+                    Label("Apple Calendar", systemImage: "calendar.badge.clock")
+                }
+                if appState.calendar.syncEnabled {
+                    Text(appState.calendar.isAuthorized
+                         ? "Follow-ups sync to your default calendar."
+                         : "Allow calendar access in Settings to enable sync.")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.textSecondary)
                 }
             }
-            Section {
-                Text("Connect HubSpot or Salesforce to sync leads and stages. Calendar sync will schedule smart follow-ups.")
-                    .font(.caption)
+
+            Section("Coming Soon") {
+                ForEach([IntegrationProvider.hubspot, .salesforce, .googleCalendar, .zapier]) { provider in
+                    HStack {
+                        Label(provider.rawValue, systemImage: provider.icon)
+                        Spacer()
+                        Text("Coming Soon").font(.caption).foregroundStyle(AppTheme.textMuted)
+                    }
+                }
             }
         }
         .scrollContentBackground(.hidden)
         .appBackground()
         .navigationTitle("Integrations")
-    }
-}
-
-struct OnboardingTourView: View {
-    @Binding var isPresented: Bool
-    @State private var step = 0
-    private let tips = [
-        ("Pick your sales vertical", "Your home screen and CRM adapt to your team category."),
-        ("Practice with voice roleplay", "Train against AI customers with natural HD voices."),
-        ("Pin locations + personal notes", "Get proximity briefings with kids' names, interests, and talk tracks."),
-        ("Use the Ultimate Toolkit", "Route planner, forecasts, certifications, and skill gap analytics.")
-    ]
-
-    var body: some View {
-        VStack(spacing: 20) {
-            Text(tips[step].0).font(.title2.bold())
-            Text(tips[step].1).font(.subheadline).multilineTextAlignment(.center)
-            HStack {
-                ForEach(0..<tips.count, id: \.self) { i in
-                    Circle().fill(i == step ? AppTheme.electricBlueBright : AppTheme.textMuted.opacity(0.3)).frame(width: 8, height: 8)
-                }
-            }
-            PrimaryButton(title: step == tips.count - 1 ? "Get Started" : "Next", icon: "arrow.right") {
-                if step < tips.count - 1 { step += 1 } else { isPresented = false }
-            }
-        }
-        .padding(24)
-        .background(AppTheme.navyCard)
-        .clipShape(RoundedRectangle(cornerRadius: 20))
-        .padding()
+        .task { await appState.calendar.requestAccess() }
     }
 }

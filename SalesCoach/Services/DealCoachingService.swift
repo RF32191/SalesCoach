@@ -42,7 +42,7 @@ final class DealCoachingService {
                 "Handle top objection for \(categoryName)",
                 "Log visit and schedule follow-up before leaving"
             ],
-            talkTrack: lead.aiRecommendedAction,
+            talkTrack: lead.displayAIAction,
             closeAsk: "Based on what we discussed, should we schedule \(lead.dealStage == .negotiation ? "contract review" : "a follow-up demo") this week?"
         )
     }
@@ -71,7 +71,7 @@ final class DealCoachingService {
         PreCallBriefing(
             openingLine: "Hi \(lead.name.split(separator: " ").first.map(String.init) ?? lead.name), it's great to connect — I wanted to follow up on \(lead.company.isEmpty ? "our last conversation" : lead.company).",
             keyPoints: [
-                lead.aiRecommendedAction,
+                lead.displayAIAction,
                 "Deal stage: \(lead.dealStage.rawValue) at \(lead.probabilityOfClosing)% probability",
                 "Pipeline value: $\(Int(lead.dealValue))"
             ],
@@ -89,7 +89,7 @@ final class DealCoachingService {
         PostVisitDebrief(
             whatWentWell: ["Built rapport", "Confirmed pain points", "Got clarity on timeline"],
             improvements: ["Ask one more trial close", "Quantify ROI in their words"],
-            nextStep: lead.aiRecommendedAction,
+            nextStep: lead.displayAIAction,
             practicePrompt: "Practice handling '\(lead.objectionTags.first ?? "budget")' objection for \(lead.company.isEmpty ? lead.name : lead.company)"
         )
     }
@@ -97,7 +97,8 @@ final class DealCoachingService {
     private func mockCallAnalysis(_ transcript: String) -> CallAnalysisResult {
         let words = transcript.split(separator: " ").count
         let questions = transcript.filter { $0 == "?" }.count
-        return CallAnalysisResult(
+        return CallAnalysisResult.analyzeLocal(
+            transcript: transcript,
             talkRatioPercent: min(85, max(35, words / 4)),
             questionsAsked: max(questions, transcript.lowercased().components(separatedBy: "?").count - 1),
             fillerWordCount: ["um", "uh", "like"].reduce(0) { $0 + transcript.lowercased().components(separatedBy: $1).count - 1 },

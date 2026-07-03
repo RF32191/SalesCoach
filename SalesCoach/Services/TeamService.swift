@@ -9,15 +9,38 @@ final class TeamService {
     func loadTeam(teamId: String) {
         guard let data = UserDefaults.standard.data(forKey: storageKey),
               let stored = try? JSONDecoder().decode([TeamMember].self, from: data) else {
-            members = Self.sampleMembers(teamId: teamId)
-            saveTeam()
+            members = []
+            removeBundledExampleMembersIfNeeded(teamId: teamId)
             return
         }
         members = stored.filter { $0.teamId == teamId }
-        if members.isEmpty {
-            members = Self.sampleMembers(teamId: teamId)
-            saveTeam()
+        removeBundledExampleMembersIfNeeded(teamId: teamId)
+    }
+
+    func loadExampleTeam(teamId: String) {
+        for member in ExampleData.exampleTeamMembers(teamId: teamId) {
+            guard !members.contains(where: { $0.email.lowercased() == member.email.lowercased() }) else { continue }
+            members.append(member)
         }
+        saveTeam()
+    }
+
+    func removeExampleTeamMembers(teamId: String) {
+        members.removeAll { $0.teamId == teamId && ExampleData.isExampleTeamMember($0) }
+        saveTeam()
+    }
+
+    func clearTeam(teamId: String) {
+        members.removeAll { $0.teamId == teamId }
+        saveTeam()
+    }
+
+    private func removeBundledExampleMembersIfNeeded(teamId: String) {
+        let migrationKey = "salescoach_removed_sample_team_\(teamId)"
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+        members.removeAll { ExampleData.isExampleTeamMember($0) }
+        UserDefaults.standard.set(true, forKey: migrationKey)
+        saveTeam()
     }
 
     func addMember(teamId: String, fullName: String, email: String) {
@@ -34,8 +57,12 @@ final class TeamService {
         }
     }
 
-    func mostCommonWeaknesses() -> [String] {
-        ["Objection Handling", "Discovery Questions", "Closing Ability", "Active Listening"]
+    func mostCommonWeaknesses(from sessions: [TrainingSession], memberIds: Set<String>) -> [String] {
+        var counts: [String: Int] = [:]
+        for session in sessions where memberIds.contains(session.userId) {
+            session.scoreReport?.improvements.forEach { counts[$0, default: 0] += 1 }
+        }
+        return counts.sorted { $0.value > $1.value }.prefix(3).map(\.key)
     }
 
     func leaderboardHighestScore() -> [LeaderboardEntry] {
@@ -70,22 +97,5 @@ final class TeamService {
         if let data = try? JSONEncoder().encode(members) {
             UserDefaults.standard.set(data, forKey: storageKey)
         }
-    }
-
-    static func sampleMembers(teamId: String) -> [TeamMember] {
-        [
-            TeamMember(teamId: teamId, userId: "rep1", fullName: "Alex Rivera", email: "alex@company.com",
-                       averageScore: 82, roleplaysCompleted: 24, closingScore: 78, improvementDelta: 15,
-                       assignedScenarios: [.coldCall, .objectionHandling]),
-            TeamMember(teamId: teamId, userId: "rep2", fullName: "Jordan Kim", email: "jordan@company.com",
-                       averageScore: 91, roleplaysCompleted: 31, closingScore: 88, improvementDelta: 8,
-                       assignedScenarios: [.closing]),
-            TeamMember(teamId: teamId, userId: "rep3", fullName: "Taylor Brooks", email: "taylor@company.com",
-                       averageScore: 74, roleplaysCompleted: 18, closingScore: 65, improvementDelta: 22,
-                       assignedScenarios: [.followUp, .renewal]),
-            TeamMember(teamId: teamId, userId: "rep4", fullName: "Casey Morgan", email: "casey@company.com",
-                       averageScore: 86, roleplaysCompleted: 27, closingScore: 84, improvementDelta: 11,
-                       assignedScenarios: [.upsell])
-        ]
     }
 }

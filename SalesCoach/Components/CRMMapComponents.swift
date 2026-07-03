@@ -165,7 +165,7 @@ struct RouteStopCard: View {
                     }
                 }
 
-                Text(stop.lead.aiRecommendedAction)
+                Text(stop.lead.displayAIAction)
                     .font(.caption)
                     .foregroundStyle(AppTheme.secondaryText(for: colorScheme))
                     .lineLimit(2)

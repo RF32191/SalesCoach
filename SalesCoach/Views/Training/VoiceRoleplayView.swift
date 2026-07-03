@@ -297,6 +297,10 @@ struct VoiceRoleplayView: View {
 
         Task {
             scoreReport = await appState.training.completeSession(durationSeconds: elapsedSeconds)
+            if let report = scoreReport, let userId = appState.auth.currentUser?.id {
+                appState.gamification.record(.roleplayComplete(score: report.overallScore), userId: userId)
+                appState.certifications.evaluate(sessions: appState.training.sessions.filter { $0.userId == userId })
+            }
             isEnding = false
             showReport = true
         }

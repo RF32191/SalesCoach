@@ -94,13 +94,34 @@ extension Lead {
 
     var dealHealthScore: Int {
         var score = probabilityOfClosing
-        if isFollowUpOverdue { score -= 15 }
-        if priority == .hot { score += 8 }
+        if isFollowUpOverdue { score -= 18 }
+        else if isFollowUpToday { score += 5 }
+        if priority == .hot { score += 10 }
+        else if priority == .cold { score -= 5 }
         if let last = lastContactedDate,
-           Calendar.current.dateComponents([.day], from: last, to: .now).day ?? 0 <= 7 {
-            score += 5
+           let days = Calendar.current.dateComponents([.day], from: last, to: .now).day {
+            if days <= 3 { score += 10 }
+            else if days <= 7 { score += 5 }
+            else if days >= 14 { score -= 12 }
+        } else if dealStage.isActivePipeline {
+            score -= 10
         }
+        if !activities.isEmpty { score += min(8, activities.count * 2) }
+        if dealEvents.count >= 3 { score += 4 }
+        if isStale { score -= 15 }
         return min(100, max(0, score))
+    }
+
+    var dealHealthColor: Color {
+        switch dealHealthScore {
+        case 75...: AppTheme.successGreen
+        case 50..<75: AppTheme.warningOrange
+        default: AppTheme.dangerRed
+        }
+    }
+
+    var predictedCloseInsight: PredictiveCloseInsight {
+        PredictiveCloseInsight.from(lead: self)
     }
 
     var dealHealthLabel: String {
@@ -125,5 +146,11 @@ extension Lead {
     var staleLabel: String {
         guard let days = daysSinceLastContact else { return "Never contacted" }
         return "No contact in \(days) days"
+    }
+
+    var displayAIAction: String {
+        aiRecommendedAction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Add client details, then refresh for an AI-recommended next step."
+            : aiRecommendedAction
     }
 }

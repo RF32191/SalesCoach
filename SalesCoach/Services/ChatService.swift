@@ -28,7 +28,17 @@ final class ChatService {
         currentConversation = conversation
     }
 
-    func sendMessage(_ content: String, userId: String) async {
+    func sendMessage(
+        _ content: String,
+        userId: String,
+        repName: String,
+        teamId: String,
+        teamMembers: [TeamMember],
+        crm: CRMService,
+        audit: AuditService,
+        teamSales: TeamSalesService,
+        gamification: GamificationService
+    ) async {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -50,8 +60,40 @@ final class ChatService {
         errorMessage = nil
 
         do {
-            let response = try await OpenAIService.shared.chat(messages: conversation.messages)
-            let assistantMessage = ChatMessage(role: .assistant, content: response)
+            let response = try await OpenAIService.shared.chatWithTeamSales(
+                messages: conversation.messages,
+                repName: repName,
+                teamMembers: teamMembers,
+                leads: crm.leads
+            )
+
+            let executor = SalesActionExecutor(
+                crm: crm,
+                audit: audit,
+                teamSales: teamSales,
+                gamification: gamification,
+                userId: userId,
+                repName: repName,
+                teamId: teamId,
+                source: .chat
+            )
+
+            var actions = response.actions
+            if actions.isEmpty {
+                actions = SalesActionParser.parseTeamSale(from: trimmed, leads: crm.leads)
+            }
+
+            let results = executor.execute(actions)
+            var reply = response.reply
+            if !results.isEmpty {
+                reply += "\n\n✓ " + results.joined(separator: "\n✓ ")
+            }
+
+            let assistantMessage = ChatMessage(
+                role: .assistant,
+                content: reply,
+                loggedActions: results.isEmpty ? nil : results
+            )
             conversation.messages.append(assistantMessage)
             conversation.updatedAt = .now
             currentConversation = conversation
