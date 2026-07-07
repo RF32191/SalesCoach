@@ -364,7 +364,7 @@ struct ProposalGeneratorView: View {
                     guard let lead = selectedLead else { return }
                     isGenerating = true
                     Task {
-                        proposalText = (try? await OpenAIService.shared.generateFollowUp(type: .email, lead: lead)) ?? "Proposal draft for \(lead.company)"
+                        proposalText = (try? await OpenAIService.shared.generateFollowUp(type: .proposalEmail, lead: lead)) ?? "Proposal draft for \(lead.company)"
                         isGenerating = false
                     }
                 }
