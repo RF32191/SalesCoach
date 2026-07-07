@@ -10,7 +10,6 @@ struct TeamDashboardView: View {
         ScrollView {
             VStack(spacing: 20) {
                 teamStats
-                teamSalesSection
                 weaknessesSection
                 membersSection
             }
@@ -48,9 +47,9 @@ struct TeamDashboardView: View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
             StatCard(title: "Team Members", value: "\(appState.team.members.count)", icon: "person.3.fill")
             StatCard(
-                title: "Team Sales (Month)",
-                value: formatTeamCurrency(teamRevenueThisMonth),
-                icon: "cart.fill",
+                title: "Avg Team Score",
+                value: "\(teamAverageScore)",
+                icon: "star.fill",
                 accentColor: AppTheme.successGreen
             )
             StatCard(title: "Total Roleplays", value: "\(totalRoleplays)", icon: "mic.fill")
@@ -58,60 +57,10 @@ struct TeamDashboardView: View {
         }
     }
 
-    private var teamSalesSection: some View {
-        VStack(spacing: 12) {
-            SectionHeader(title: "Team Sales Feed")
-            Text("Reps log closed deals in Team Sales Coach — visible here for the whole team.")
-                .font(.caption)
-                .foregroundStyle(AppTheme.textSecondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            if appState.teamSales.sales.isEmpty {
-                Text("No team sales logged yet. Try: \"Closed $5k with Acme\" in the AI Coach.")
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.textMuted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                ForEach(appState.teamSales.sales.prefix(10)) { sale in
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(sale.repName)
-                                .font(.caption.bold())
-                                .foregroundStyle(AppTheme.tealGreen)
-                            Text("\(sale.clientName)\(sale.company.isEmpty ? "" : " · \(sale.company)")")
-                                .font(.subheadline.bold())
-                                .foregroundStyle(AppTheme.textPrimary)
-                            Text(sale.loggedAt.formatted(date: .abbreviated, time: .shortened))
-                                .font(.caption2)
-                                .foregroundStyle(AppTheme.textMuted)
-                        }
-                        Spacer()
-                        Text(formatTeamCurrency(sale.amount))
-                            .font(.headline.bold())
-                            .foregroundStyle(AppTheme.successGreen)
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-        }
-        .cardStyle()
-    }
-
-    private var teamRevenueThisMonth: Double {
-        guard let teamId = appState.auth.currentUser?.teamId else { return 0 }
-        return appState.teamSales.revenueThisMonth(for: teamId)
-    }
-
-    private func formatTeamCurrency(_ value: Double) -> String {
-        if value >= 1_000_000 { return String(format: "$%.1fM", value / 1_000_000) }
-        if value >= 1_000 { return String(format: "$%.0fK", value / 1_000) }
-        return String(format: "$%.0f", value)
-    }
-
     private var weaknessesSection: some View {
         VStack(spacing: 12) {
             SectionHeader(title: "Most Common Weaknesses")
-            let weaknesses = teamWeaknesses
+            let weaknesses = appState.team.mostCommonWeaknesses()
             if weaknesses.isEmpty {
                 Text("Complete team roleplays to surface coaching insights here.")
                     .font(.caption)
@@ -150,14 +99,6 @@ struct TeamDashboardView: View {
                 }
             }
         }
-    }
-
-    private var teamWeaknesses: [String] {
-        let memberIds = Set(appState.team.members.map(\.userId))
-        let ids = memberIds.isEmpty
-            ? Set([appState.auth.currentUser?.id].compactMap { $0 })
-            : memberIds
-        return appState.team.mostCommonWeaknesses(from: appState.training.sessions, memberIds: ids)
     }
 
     private var teamAverageScore: Int {

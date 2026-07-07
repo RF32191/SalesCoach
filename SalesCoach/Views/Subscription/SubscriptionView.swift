@@ -111,6 +111,20 @@ struct SubscriptionView: View {
                     .font(.subheadline)
                     .foregroundStyle(AppTheme.tealGreen)
             }
+
+            HStack {
+                Text("Token charges (MTD)")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.secondaryText(for: colorScheme))
+                Spacer()
+                Text("$\(appState.tokenBilling.costThisMonth(userId: appState.auth.currentUser?.id ?? ""), specifier: "%.2f")")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(AppTheme.warningOrange)
+            }
+
+            Text("Billed at $\(String(format: "%.3f", TokenBillingRates.costPerThousandTokens)) per 1,000 AI tokens for Office features.")
+                .font(.caption2)
+                .foregroundStyle(AppTheme.textMuted)
         }
         .cardStyle()
     }

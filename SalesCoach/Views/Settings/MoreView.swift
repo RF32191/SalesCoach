@@ -8,22 +8,33 @@ struct MoreView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Help") {
+                Section("Platform") {
                     NavigationLink {
-                        ProductGuideView()
+                        PlatformRootView()
                     } label: {
-                        Label("Product Guide", systemImage: "book.fill")
+                        Label("All Modules", systemImage: "square.grid.3x3.fill")
                     }
 
-                    Button {
-                        onboardingComplete = false
-                        showOnboardingTour = true
+                    NavigationLink {
+                        OfficeTabView()
                     } label: {
-                        Label("Replay App Tour", systemImage: "arrow.counterclockwise")
+                        Label("Office", systemImage: "building.2.fill")
+                    }
+
+                    NavigationLink {
+                        AutonomousBillingView()
+                    } label: {
+                        Label("AI Billing Agent", systemImage: "creditcard.fill")
+                    }
+
+                    NavigationLink {
+                        DigitalBusinessCardEditorView()
+                    } label: {
+                        Label("Digital Business Card", systemImage: "person.text.rectangle.fill")
                     }
                 }
 
-                Section {
+                Section("Team & Growth") {
                     NavigationLink {
                         LeaderboardView()
                     } label: {
@@ -37,6 +48,33 @@ struct MoreView: View {
                         } label: {
                             Label("Team Dashboard", systemImage: "person.3.fill")
                         }
+                    }
+
+                    NavigationLink {
+                        ConversationTrainingLogView()
+                    } label: {
+                        Label("Activity Log", systemImage: "clock.arrow.circlepath")
+                    }
+                }
+
+                Section("Help & Learning") {
+                        NavigationLink {
+                            TutorialLibraryView()
+                        } label: {
+                            Label("Tutorial Library", systemImage: "graduationcap.fill")
+                        }
+
+                        NavigationLink {
+                            ProductGuideView()
+                        } label: {
+                            Label("Product Guide", systemImage: "book.fill")
+                        }
+
+                    Button {
+                        onboardingComplete = false
+                        showOnboardingTour = true
+                    } label: {
+                        Label("Replay App Tour", systemImage: "arrow.counterclockwise")
                     }
                 }
 
@@ -72,6 +110,11 @@ struct MoreView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
             #endif
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    TutorialHelpButton(tutorialID: .more)
+                }
+            }
             .overlay {
                 if showOnboardingTour {
                     Color.black.opacity(0.55).ignoresSafeArea()
@@ -88,7 +131,6 @@ struct MoreView: View {
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
     @State private var showClearDataConfirm = false
-    @State private var showRemoveExamplesConfirm = false
     @State private var dataMessage: String?
 
     private var aiBackendStatus: String {
@@ -158,17 +200,10 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Help") {
-                NavigationLink {
-                    ProductGuideView()
-                } label: {
-                    Label("Product Guide", systemImage: "book.fill")
-                }
-            }
-
             Section("About") {
+                LabeledContent("App", value: AppConfig.appName)
                 LabeledContent("Version", value: "1.0.0")
-                LabeledContent("App", value: "Sales Coach")
+                LabeledContent("Product", value: AppConfig.productTagline)
             }
         }
         .scrollContentBackground(.hidden)

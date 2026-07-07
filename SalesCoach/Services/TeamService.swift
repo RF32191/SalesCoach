@@ -57,12 +57,8 @@ final class TeamService {
         }
     }
 
-    func mostCommonWeaknesses(from sessions: [TrainingSession], memberIds: Set<String>) -> [String] {
-        var counts: [String: Int] = [:]
-        for session in sessions where memberIds.contains(session.userId) {
-            session.scoreReport?.improvements.forEach { counts[$0, default: 0] += 1 }
-        }
-        return counts.sorted { $0.value > $1.value }.prefix(3).map(\.key)
+    func mostCommonWeaknesses() -> [String] {
+        []
     }
 
     func leaderboardHighestScore() -> [LeaderboardEntry] {

@@ -93,30 +93,70 @@ struct CSVLeadRow {
     let fields: [String: String]
 
     func makeLead(ownerId: String) -> Lead {
-        let stage = DealStage.allCases.first {
-            $0.rawValue.localizedCaseInsensitiveContains(fields["stage"] ?? "")
-        } ?? .newLead
+        let name = combinedName()
+        let stage = mappedStage()
         let priority = LeadPriority.allCases.first {
-            $0.rawValue.localizedCaseInsensitiveContains(fields["priority"] ?? "")
+            $0.rawValue.localizedCaseInsensitiveContains(field("priority", "lead priority") ?? "")
         } ?? .warm
-        let value = Double(fields["value"]?.filter { $0.isNumber || $0 == "." } ?? "") ?? 0
-        let probability = Int(fields["probability"]?.filter(\.isNumber) ?? "") ?? 20
+        let value = Double(field("value", "amount", "deal value", "deal amount", "annual revenue")?.filter { $0.isNumber || $0 == "." } ?? "") ?? 0
+        let probability = Int(field("probability", "close probability", "win probability")?.filter(\.isNumber) ?? "") ?? 20
         let followUp: Date? = {
-            guard let raw = fields["next follow-up"] ?? fields["nextfollowup"], !raw.isEmpty else { return nil }
+            guard let raw = field("next follow-up", "nextfollowup", "follow up date", "follow-up date"), !raw.isEmpty else { return nil }
             return ISO8601DateFormatter().date(from: raw) ?? ISO8601DateFormatter().date(from: raw + "T12:00:00Z")
         }()
+        let source = field("source", "lead source", "original source", "record source") ?? "CRM Import"
+        var notes = field("notes", "description", "about") ?? ""
+        if let title = field("title", "job title", "jobtitle"), !title.isEmpty {
+            notes = notes.isEmpty ? title : "\(title)\n\(notes)"
+        }
         return Lead(
             ownerId: ownerId,
-            name: fields["name"] ?? "Imported Contact",
-            company: fields["company"] ?? "",
-            phone: fields["phone"] ?? "",
-            email: fields["email"] ?? "",
+            name: name.isEmpty ? "Imported Contact" : name,
+            company: field("company", "company name", "account name", "organization", "org") ?? "",
+            phone: field("phone", "phone number", "mobile phone", "mobile", "work phone", "telephone") ?? "",
+            email: field("email", "email address", "work email", "e-mail") ?? "",
             dealValue: value,
             dealStage: stage,
+            notes: notes,
             nextFollowUpDate: followUp,
             probabilityOfClosing: min(100, max(0, probability)),
-            leadSource: fields["source"] ?? "CSV Import",
+            leadSource: source,
             priority: priority
         )
+    }
+
+    private func combinedName() -> String {
+        if let full = field("name", "full name", "contact name"), !full.isEmpty { return full }
+        let first = field("first name", "firstname", "first_name") ?? ""
+        let last = field("last name", "lastname", "last_name") ?? ""
+        return [first, last].filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    private func mappedStage() -> DealStage {
+        let raw = field("stage", "deal stage", "dealstage", "pipeline stage", "lifecycle stage", "status") ?? ""
+        if raw.isEmpty { return .newLead }
+        let normalized = raw.lowercased()
+        if normalized.contains("closed won") || normalized == "won" { return .won }
+        if normalized.contains("closed lost") || normalized == "lost" { return .lost }
+        if normalized.contains("proposal") { return .proposalSent }
+        if normalized.contains("negotiat") { return .negotiation }
+        if normalized.contains("procure") { return .procurement }
+        if normalized.contains("legal") { return .legal }
+        if normalized.contains("demo") { return .demo }
+        if normalized.contains("discover") { return .discovery }
+        if normalized.contains("qualif") { return .qualified }
+        if normalized.contains("contact") { return .contacted }
+        return DealStage.allCases.first { $0.rawValue.localizedCaseInsensitiveContains(raw) } ?? .newLead
+    }
+
+    private func field(_ keys: String...) -> String? {
+        for key in keys {
+            let lowered = key.lowercased()
+            if let exact = fields[lowered], !exact.isEmpty { return exact }
+            if let match = fields.first(where: { $0.key.replacingOccurrences(of: "_", with: " ") == lowered && !$0.value.isEmpty })?.value {
+                return match
+            }
+        }
+        return nil
     }
 }

@@ -1,13 +1,17 @@
 import Foundation
 
 enum DealStage: String, Codable, CaseIterable, Identifiable {
-    case newLead = "New Lead"
+    case newLead = "Lead"
     case contacted = "Contacted"
     case qualified = "Qualified"
-    case proposalSent = "Proposal Sent"
+    case discovery = "Discovery"
+    case demo = "Demo"
+    case proposalSent = "Proposal"
     case negotiation = "Negotiation"
-    case won = "Won"
-    case lost = "Lost"
+    case legal = "Legal"
+    case procurement = "Procurement"
+    case won = "Closed Won"
+    case lost = "Closed Lost"
 
     var id: String { rawValue }
 
@@ -16,10 +20,29 @@ enum DealStage: String, Codable, CaseIterable, Identifiable {
         case .newLead: 0
         case .contacted: 1
         case .qualified: 2
-        case .proposalSent: 3
-        case .negotiation: 4
-        case .won: 5
-        case .lost: 6
+        case .discovery: 3
+        case .demo: 4
+        case .proposalSent: 5
+        case .negotiation: 6
+        case .legal: 7
+        case .procurement: 8
+        case .won: 9
+        case .lost: 10
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = DealStage.migrate(raw) ?? DealStage(rawValue: raw) ?? .newLead
+    }
+
+    private static func migrate(_ raw: String) -> DealStage? {
+        switch raw {
+        case "New Lead": return .newLead
+        case "Proposal Sent": return .proposalSent
+        case "Won": return .won
+        case "Lost": return .lost
+        default: return nil
         }
     }
 }
@@ -68,6 +91,7 @@ struct Lead: Codable, Identifiable, Equatable {
     var dealEvents: [DealEvent]
     var location: LeadLocation
     var activities: [LeadActivity]
+    var attachments: [LeadAttachment]
     var createdAt: Date
     var updatedAt: Date
 
@@ -99,6 +123,7 @@ struct Lead: Codable, Identifiable, Equatable {
         dealEvents: [DealEvent] = [],
         location: LeadLocation = LeadLocation(),
         activities: [LeadActivity] = [],
+        attachments: [LeadAttachment] = [],
         createdAt: Date = .now,
         updatedAt: Date = .now
     ) {
@@ -129,6 +154,7 @@ struct Lead: Codable, Identifiable, Equatable {
         self.dealEvents = dealEvents
         self.location = location
         self.activities = activities
+        self.attachments = attachments
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -136,7 +162,7 @@ struct Lead: Codable, Identifiable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, ownerId, name, company, phone, email, dealValue, dealStage, notes
         case lastContactedDate, nextFollowUpDate, probabilityOfClosing, aiRecommendedAction
-        case leadSource, priority, tags, contactRole, isFavorite, expectedCloseDate, contactIntel, referralSource, competitorName, objectionTags, lostReason, dealEvents, location, activities, createdAt, updatedAt
+        case leadSource, priority, tags, contactRole, isFavorite, expectedCloseDate, contactIntel, referralSource, competitorName, objectionTags, lostReason, dealEvents, location, activities, attachments, createdAt, updatedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -168,6 +194,7 @@ struct Lead: Codable, Identifiable, Equatable {
         dealEvents = try container.decodeIfPresent([DealEvent].self, forKey: .dealEvents) ?? []
         location = try container.decodeIfPresent(LeadLocation.self, forKey: .location) ?? LeadLocation()
         activities = try container.decodeIfPresent([LeadActivity].self, forKey: .activities) ?? []
+        attachments = try container.decodeIfPresent([LeadAttachment].self, forKey: .attachments) ?? []
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
     }

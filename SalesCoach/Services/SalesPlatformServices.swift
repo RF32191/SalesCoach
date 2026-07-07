@@ -238,9 +238,11 @@ enum CRMEnhancements {
         let calendar = Calendar.current
         switch lead.dealStage {
         case .newLead, .contacted: return calendar.date(byAdding: .day, value: 2, to: .now)!
-        case .qualified: return calendar.date(byAdding: .day, value: 3, to: .now)!
+        case .qualified, .discovery: return calendar.date(byAdding: .day, value: 3, to: .now)!
+        case .demo: return calendar.date(byAdding: .day, value: 4, to: .now)!
         case .proposalSent: return calendar.date(byAdding: .day, value: 5, to: .now)!
-        case .negotiation: return calendar.date(byAdding: .day, value: 1, to: .now)!
+        case .negotiation, .legal: return calendar.date(byAdding: .day, value: 1, to: .now)!
+        case .procurement: return calendar.date(byAdding: .day, value: 2, to: .now)!
         case .won, .lost: return calendar.date(byAdding: .day, value: 14, to: .now)!
         }
     }
@@ -260,10 +262,10 @@ enum CRMEnhancements {
         return rows.joined(separator: "\n")
     }
 
-    static func parseCSV(_ csv: String) -> [CSVLeadRow] {
+    static func parseCSV(_ csv: String, source: CRMImportSource = .genericCSV) -> [CSVLeadRow] {
         let lines = csv.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         guard lines.count >= 2 else { return [] }
-        let headers = parseCSVLine(lines[0]).map { $0.lowercased() }
+        let headers = parseCSVLine(lines[0]).map { normalizeHeader($0, source: source) }
         return lines.dropFirst().compactMap { line in
             let values = parseCSVLine(line)
             guard !values.isEmpty else { return nil }
@@ -271,8 +273,18 @@ enum CRMEnhancements {
             for (index, header) in headers.enumerated() where index < values.count {
                 dict[header] = values[index]
             }
+            if dict["source"] == nil || dict["source"]?.isEmpty == true {
+                dict["source"] = source.rawValue
+            }
             return CSVLeadRow(fields: dict)
         }
+    }
+
+    private static func normalizeHeader(_ header: String, source: CRMImportSource) -> String {
+        header
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "\"", with: "")
     }
 
     private static func parseCSVLine(_ line: String) -> [String] {

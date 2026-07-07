@@ -30,16 +30,23 @@ struct UltimateSalesHubView: View {
                 }
 
                 section("CRM Intelligence") {
+                    hubLink("HubSpot CRM Hub", "Templates, sequences, merge, sync profile", "h.square.fill", AppTheme.warningOrange) { HubSpotCRMHubView() }
+                    hubLink("Commission & Quota", "Track earnings and monthly target", "percent", AppTheme.successGreen) { CommissionDashboardView() }
+                    hubLink("Objection Intelligence", "Team objection heatmap + responses", "exclamationmark.bubble.fill", AppTheme.dangerRed) { ObjectionIntelligenceView() }
+                    hubLink("Battle Cards", "Competitive talk tracks", "flag.fill", AppTheme.electricBlue) { BattleCardsView() }
+                    hubLink("Voice Activity Log", "Speak to log CRM activity", "waveform.circle.fill", AppTheme.tealGreen) { VoiceLogView() }
+                    hubLink("Team Win Library", "Learn from rep wins", "books.vertical.fill", AppTheme.successGreen) { TeamWinLibraryView() }
                     hubLink("Revenue Forecast", "Weighted pipeline projections", "chart.line.uptrend.xyaxis", AppTheme.successGreen) { RevenueForecastView() }
                     hubLink("Activity Goals", "Weekly calls, visits, and new leads", "target", AppTheme.warningOrange) { ActivityGoalsView() }
                     hubLink("Import / Export", "CSV backup and bulk lead import", "arrow.up.arrow.down.circle.fill", AppTheme.tealGreen) { CRMDataView() }
                     hubLink("Order Audit Log", "Closed sales and full change history", "list.bullet.rectangle.portrait.fill", AppTheme.successGreen) { OrderAuditView() }
                     hubLink("Proposal Generator", "AI proposals with PDF export", "doc.richtext.fill", AppTheme.electricBlueBright) { ProposalGeneratorView() }
-                    hubLink("Business Card Scan", "Capture contacts from cards", "camera.viewfinder", AppTheme.electricBlueBright) { BusinessCardScanView() }
+                    hubLink("Business Cards", "Digital card + scan contacts", "person.text.rectangle.fill", AppTheme.electricBlueBright) { BusinessCardsHubView() }
                     hubLink("Automations", "Workflow templates for leads and deals", "arrow.triangle.branch", AppTheme.warningOrange) { AutomationWorkflowsView() }
                 }
 
                 section("Team Command") {
+                    hubLink("Manager Coaching Loop", "Skill gap → assigned drills", "person.crop.circle.badge.checkmark", AppTheme.tealGreen) { ManagerCoachingLoopView() }
                     hubLink("Manager Report", "AI weekly coaching digest", "doc.text.magnifyingglass", AppTheme.electricBlueBright) { ManagerReportView() }
                     hubLink("Manager Drills", "Assigned training from your manager", "list.bullet.clipboard.fill", AppTheme.dangerRed) { ManagerDrillsView() }
                     hubLink("Team Playbooks", "Shared winning scripts", "books.vertical.fill", AppTheme.electricBlue) { PlaybooksView() }
@@ -493,40 +500,9 @@ struct PlaybooksView: View {
 
 struct IntegrationsView: View {
     @Environment(AppState.self) private var appState
-    @AppStorage("integration_hubspot") private var hubspot = false
-    @AppStorage("integration_salesforce") private var salesforce = false
 
     var body: some View {
-        List {
-            Section("Connected") {
-                Toggle(isOn: Binding(
-                    get: { appState.calendar.syncEnabled },
-                    set: { appState.calendar.syncEnabled = $0 }
-                )) {
-                    Label("Apple Calendar", systemImage: "calendar.badge.clock")
-                }
-                if appState.calendar.syncEnabled {
-                    Text(appState.calendar.isAuthorized
-                         ? "Follow-ups sync to your default calendar."
-                         : "Allow calendar access in Settings to enable sync.")
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.textSecondary)
-                }
-            }
-
-            Section("Coming Soon") {
-                ForEach([IntegrationProvider.hubspot, .salesforce, .googleCalendar, .zapier]) { provider in
-                    HStack {
-                        Label(provider.rawValue, systemImage: provider.icon)
-                        Spacer()
-                        Text("Coming Soon").font(.caption).foregroundStyle(AppTheme.textMuted)
-                    }
-                }
-            }
-        }
-        .scrollContentBackground(.hidden)
-        .appBackground()
-        .navigationTitle("Integrations")
-        .task { await appState.calendar.requestAccess() }
+        IntegrationsHubView()
+            .navigationTitle("Integrations")
     }
 }

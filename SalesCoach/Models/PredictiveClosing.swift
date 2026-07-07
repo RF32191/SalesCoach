@@ -18,8 +18,12 @@ struct PredictiveCloseInsight: Equatable {
         case .newLead: days = 45; probability -= 5
         case .contacted: days = 35
         case .qualified: days = 28; probability += 5
+        case .discovery: days = 25; probability += 4
+        case .demo: days = 22; probability += 6
         case .proposalSent: days = 21; probability += 8
         case .negotiation: days = 14; probability += 12
+        case .legal: days = 10; probability += 15
+        case .procurement: days = 7; probability += 18
         case .won: days = 0; probability = 100; risk = "Closed"
         case .lost: days = 0; probability = 0; risk = "Lost"
         }

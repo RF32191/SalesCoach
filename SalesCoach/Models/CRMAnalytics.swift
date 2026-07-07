@@ -47,8 +47,12 @@ extension DealStage {
         case .newLead: AppTheme.textMuted
         case .contacted: AppTheme.electricBlueBright
         case .qualified: AppTheme.tealGreen
+        case .discovery: AppTheme.electricBlue
+        case .demo: AppTheme.warningOrange
         case .proposalSent: AppTheme.warningOrange
         case .negotiation: AppTheme.electricBlue
+        case .legal: AppTheme.textSecondary
+        case .procurement: AppTheme.textMuted
         case .won: AppTheme.successGreen
         case .lost: AppTheme.dangerRed
         }
@@ -59,7 +63,23 @@ extension DealStage {
     }
 
     static var pipelineColumns: [DealStage] {
-        [.newLead, .contacted, .qualified, .proposalSent, .negotiation]
+        [.newLead, .contacted, .qualified, .discovery, .demo, .proposalSent, .negotiation, .legal, .procurement]
+    }
+
+    var pipelineShortLabel: String {
+        switch self {
+        case .newLead: "Lead"
+        case .contacted: "Contacted"
+        case .qualified: "Qualified"
+        case .discovery: "Discovery"
+        case .demo: "Demo"
+        case .proposalSent: "Proposal"
+        case .negotiation: "Negotiate"
+        case .legal: "Legal"
+        case .procurement: "Procure"
+        case .won: "Won"
+        case .lost: "Lost"
+        }
     }
 }
 

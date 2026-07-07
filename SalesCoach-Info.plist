@@ -19,5 +19,11 @@
 	<string>Sales Coach uses your location to pin leads on the map and remind you when you're near a customer.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Sales Coach sends reminders when you're near a pinned lead location, even when the app is in the background.</string>
+	<key>NSSiriUsageDescription</key>
+	<string>Sales Coach uses Siri to start practice scenarios, open team sales log, and log sales with your company team.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Sales Coach uses the camera to scan business cards and add contacts to your CRM.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Sales Coach uses your photo library to import business card images for contact scanning.</string>
 </dict>
 </plist>

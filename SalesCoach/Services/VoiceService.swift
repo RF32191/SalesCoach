@@ -110,6 +110,21 @@ final class VoiceService: NSObject {
         finishCurrentUtterance()
     }
 
+    func transcribeOnce(timeoutSeconds: Double = 8) async -> String? {
+        do {
+            try startListening()
+        } catch {
+            return nil
+        }
+        let start = Date()
+        while isListening && Date().timeIntervalSince(start) < timeoutSeconds {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+        stopListening()
+        let text = transcribedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
     func cancelListening() {
         silenceDetectionTask?.cancel()
         silenceDetectionTask = nil

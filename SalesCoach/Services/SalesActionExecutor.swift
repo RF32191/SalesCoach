@@ -39,13 +39,7 @@ struct SalesActionExecutor {
         teamSales.log(sale)
 
         if let lead = findLead(clientName) {
-            crm.closeOrder(
-                leadId: lead.id,
-                finalValue: value,
-                notes: action.summary ?? "Logged via team sales chat",
-                source: source,
-                actorId: userId
-            )
+            crm.markWon(lead.id, finalValue: value)
         } else {
             recordStandaloneOrder(clientName: clientName, company: company, value: value, notes: action.summary ?? "")
         }

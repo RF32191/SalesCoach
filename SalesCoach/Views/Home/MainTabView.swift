@@ -5,6 +5,7 @@ struct MainTabView: View {
     @Environment(AppState.self) private var appState
     @AppStorage("salescoach_onboarding_complete") private var onboardingComplete = false
     @State private var showOnboardingTour = false
+    @State private var siriPresentation: SiriNavigationRequest?
 
     init() {
         let appearance = UITabBarAppearance()
@@ -21,6 +22,25 @@ struct MainTabView: View {
                     Label("Home", systemImage: "house.fill")
                 }
 
+            CRMRootTabView()
+                .tabItem {
+                    Label("Sell", systemImage: "cart.fill")
+                }
+
+            NavigationStack {
+                CoachHubView()
+            }
+            .tabItem {
+                Label("Coach", systemImage: "sparkles")
+            }
+
+            NavigationStack {
+                PlatformRootView()
+            }
+            .tabItem {
+                Label("Platform", systemImage: "square.grid.3x3.fill")
+            }
+
             MoreView()
                 .tabItem {
                     Label("More", systemImage: "ellipsis.circle.fill")
@@ -33,6 +53,12 @@ struct MainTabView: View {
         )) { lead in
             ProximityBriefingView(lead: lead)
         }
+        .fullScreenCover(item: $siriPresentation) { request in
+            SiriDestinationView(request: request) {
+                siriPresentation = nil
+            }
+            .environment(appState)
+        }
         .onAppear {
             appState.loadUserData()
             Task {
@@ -41,6 +67,7 @@ struct MainTabView: View {
             if !onboardingComplete {
                 showOnboardingTour = true
             }
+            wireSiriNavigation()
         }
         .overlay {
             if showOnboardingTour {
@@ -50,6 +77,15 @@ struct MainTabView: View {
         }
         .onChange(of: showOnboardingTour) { _, isShowing in
             if !isShowing { onboardingComplete = true }
+        }
+    }
+
+    private func wireSiriNavigation() {
+        SiriNavigationCenter.shared.onNavigate = { request in
+            siriPresentation = request
+        }
+        if let pending = SiriNavigationCenter.shared.consumePending() {
+            siriPresentation = pending
         }
     }
 }

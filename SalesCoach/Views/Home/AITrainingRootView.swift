@@ -3,11 +3,17 @@ import SwiftUI
 struct AITrainingRootView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
-    @State private var selectedTab: TrainingTab = .roleplay
+    var initialTab: TrainingTab = .roleplay
+    @State private var selectedTab: TrainingTab
 
     enum TrainingTab: String, CaseIterable {
         case roleplay = "Roleplay"
-        case chat = "AI Coach"
+        case chat = "Team Sales Log"
+    }
+
+    init(initialTab: TrainingTab = .roleplay) {
+        self.initialTab = initialTab
+        _selectedTab = State(initialValue: initialTab)
     }
 
     var body: some View {
@@ -43,9 +49,9 @@ struct AITrainingRootView: View {
                 AIStatusBadge()
                 Spacer()
                 if !AppConfig.isAIConfigured {
-                    Text("Set RAILWAY_API_URL in scheme for live AI")
+                    Text("Team posts work offline. AI coaching is optional.")
                         .font(.caption2)
-                        .foregroundStyle(AppTheme.warningOrange)
+                        .foregroundStyle(AppTheme.textSecondary)
                 }
             }
 

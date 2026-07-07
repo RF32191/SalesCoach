@@ -12,15 +12,17 @@ struct MapLegendChip: View {
                 .fill(color)
                 .frame(width: 8, height: 8)
             Image(systemName: icon)
-                .font(.caption2)
+                .font(.caption.bold())
             Text(label)
-                .font(.caption2.bold())
+                .font(.caption.bold())
+                .lineLimit(1)
         }
-        .foregroundStyle(.white.opacity(0.92))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial)
+        .foregroundStyle(AppTheme.textPrimary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(AppTheme.navyCard.opacity(0.95))
         .clipShape(Capsule())
+        .overlay(Capsule().stroke(AppTheme.border, lineWidth: 1))
     }
 }
 
@@ -30,33 +32,8 @@ struct ClientMapPin: View {
     let accent: Color
 
     var body: some View {
-        VStack(spacing: 4) {
-            ZStack {
-                Circle()
-                    .fill(accent.opacity(0.25))
-                    .frame(width: 44, height: 44)
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [accent, accent.opacity(0.75)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 34, height: 34)
-                    .shadow(color: accent.opacity(0.45), radius: 6, y: 3)
-                Image(systemName: isProximityEnabled ? "bell.fill" : "person.fill")
-                    .font(.caption.bold())
-                    .foregroundStyle(.white)
-            }
-            Text(title)
-                .font(.caption2.bold())
-                .lineLimit(1)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(.ultraThinMaterial)
-                .clipShape(Capsule())
-        }
+        MapClientPin(accent: accent, isProximityEnabled: isProximityEnabled)
+            .accessibilityLabel(title)
     }
 }
 
@@ -65,27 +42,8 @@ struct ProspectMapPin: View {
     let category: SalesCategory
 
     var body: some View {
-        VStack(spacing: 4) {
-            ZStack {
-                Circle()
-                    .stroke(category.accentColor.opacity(0.35), lineWidth: 2)
-                    .frame(width: 40, height: 40)
-                Circle()
-                    .fill(category.accentColor)
-                    .frame(width: 30, height: 30)
-                Image(systemName: category.icon)
-                    .font(.caption2.bold())
-                    .foregroundStyle(.white)
-            }
-            Text(title)
-                .font(.caption2.bold())
-                .lineLimit(1)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(category.accentColor.opacity(0.18))
-                .background(.ultraThinMaterial)
-                .clipShape(Capsule())
-        }
+        MapCategoryPin(category: category)
+            .accessibilityLabel(title)
     }
 }
 

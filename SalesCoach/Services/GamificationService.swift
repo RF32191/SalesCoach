@@ -18,13 +18,6 @@ struct GamificationProfile: Codable, Equatable {
         default: return "Top 1% Closer"
         }
     }
-    var xpToNextLevel: Int { level * 250 - xp }
-    var levelProgress: Double {
-        let floor = (level - 1) * 250
-        let ceiling = level * 250
-        guard ceiling > floor else { return 1 }
-        return Double(xp - floor) / Double(ceiling - floor)
-    }
 }
 
 enum GamificationEvent {
@@ -46,16 +39,14 @@ final class GamificationService {
         guard let data = UserDefaults.standard.data(forKey: key),
               let stored = try? JSONDecoder().decode(GamificationProfile.self, from: data) else {
             profile = GamificationProfile()
-            record(.dailyOpen)
-            save(for: userId)
+            record(.dailyOpen, userId: userId)
             return
         }
         profile = stored
-        record(.dailyOpen)
-        save(for: userId)
+        record(.dailyOpen, userId: userId)
     }
 
-    func record(_ event: GamificationEvent, userId: String? = nil) {
+    func record(_ event: GamificationEvent, userId: String) {
         switch event {
         case .roleplayComplete(let score):
             profile.totalRoleplays += 1
@@ -69,11 +60,13 @@ final class GamificationService {
             profile.xp += 100
         case .dailyOpen:
             let today = Calendar.current.startOfDay(for: .now)
-            let wasActiveToday = profile.lastActiveDay.map { Calendar.current.isDate($0, inSameDayAs: today) } ?? false
+            if let last = profile.lastActiveDay, Calendar.current.isDate(last, inSameDayAs: today) {
+                break
+            }
             updateStreak()
-            if !wasActiveToday { profile.xp += 5 }
+            profile.xp += 5
         }
-        if let userId { save(for: userId) }
+        save(for: userId)
     }
 
     private func updateStreak() {

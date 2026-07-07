@@ -1,7 +1,6 @@
 import Foundation
 
 enum SalesActionParser {
-    /// Parses team sale announcements from chat — no CRM client management.
     static func parseTeamSale(from text: String, leads: [Lead]) -> [SalesAction] {
         let lower = text.lowercased()
         let saleKeywords = ["won", "closed", "sale", "sold", "deal", "booked", "signed"]

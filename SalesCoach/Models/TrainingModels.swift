@@ -140,7 +140,10 @@ struct TrainingSession: Codable, Identifiable, Equatable {
     var closingProgress: Int
     var currentSuggestion: String?
     var durationSeconds: Int
+    var startedAt: Date?
     var completedAt: Date?
+
+    var isInProgress: Bool { completedAt == nil }
 
     init(
         id: String = UUID().uuidString,
@@ -152,6 +155,7 @@ struct TrainingSession: Codable, Identifiable, Equatable {
         closingProgress: Int = 0,
         currentSuggestion: String? = nil,
         durationSeconds: Int = 0,
+        startedAt: Date? = .now,
         completedAt: Date? = nil
     ) {
         self.id = id
@@ -163,6 +167,7 @@ struct TrainingSession: Codable, Identifiable, Equatable {
         self.closingProgress = closingProgress
         self.currentSuggestion = currentSuggestion
         self.durationSeconds = durationSeconds
+        self.startedAt = startedAt
         self.completedAt = completedAt
     }
 }

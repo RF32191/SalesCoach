@@ -100,7 +100,29 @@ enum AIRecommendationEngine {
             ))
         }
 
-        return items.sorted { $0.priority < $1.priority }.prefix(3).map { $0 }
+        if metricsAtRisk(dealsAtRisk: leads.filter { $0.dealStage.isActivePipeline && $0.dealHealthScore < 50 }.count) {
+            items.append(AIRecommendation(
+                title: "Rescue at-risk deals",
+                detail: "Low health scores detected. Review deal replay and schedule recovery calls.",
+                icon: "heart.slash.fill",
+                priority: 2
+            ))
+        }
+
+        if pipelineValue > 50_000, hotLeads.isEmpty {
+            items.append(AIRecommendation(
+                title: "Accelerate pipeline velocity",
+                detail: "Strong pipeline value — identify bottlenecks in proposal and negotiation stages.",
+                icon: "arrow.forward.circle.fill",
+                priority: 9
+            ))
+        }
+
+        return items.sorted { $0.priority < $1.priority }.prefix(5).map { $0 }
+    }
+
+    private static func metricsAtRisk(dealsAtRisk: Int) -> Bool {
+        dealsAtRisk > 0
     }
 
     static func dailyMotivation(for category: SalesCategory?) -> String {

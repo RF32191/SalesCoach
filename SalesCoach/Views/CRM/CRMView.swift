@@ -9,6 +9,8 @@ struct CRMView: View {
     @State private var listFilter: CRMListFilter = .all
     @State private var sortOption: LeadSortOption = .recentlyUpdated
     @State private var viewMode: CRMViewMode
+    @State private var showImport = false
+    @State private var showBusinessCard = false
 
     init(initialViewMode: CRMViewMode = .dashboard) {
         _viewMode = State(initialValue: initialViewMode)
@@ -17,6 +19,7 @@ struct CRMView: View {
     enum CRMViewMode: String, CaseIterable {
         case dashboard = "Dashboard"
         case pipeline = "Pipeline"
+        case activity = "Activity"
         case tasks = "Tasks"
         case list = "List"
         case companies = "Companies"
@@ -38,40 +41,50 @@ struct CRMView: View {
         VStack(spacing: 0) {
             crmHeader
 
-            Picker("View", selection: $viewMode) {
-                ForEach(CRMViewMode.allCases, id: \.self) { mode in
-                    Text(mode.rawValue).tag(mode)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(CRMViewMode.allCases, id: \.self) { mode in
+                        CRMViewModeChip(
+                            title: mode.rawValue,
+                            icon: mode.chipIcon,
+                            isSelected: viewMode == mode
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) { viewMode = mode }
+                        }
+                    }
                 }
+                .padding(.horizontal)
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
-            .padding(.bottom, 8)
+            .padding(.vertical, 10)
 
             switch viewMode {
             case .dashboard:
                 CRMDashboardView()
             case .pipeline:
                 CRMPipelineBoardView()
+            case .activity:
+                ActivityInboxView()
             case .tasks:
                 CRMTasksView()
             case .map:
-                VStack(spacing: 14) {
-                    NavigationLink {
-                        CompanyDiscoveryView(initialCategory: appState.auth.currentUser?.salesCategory)
-                    } label: {
-                        FeatureCard(
-                            title: "Find Category Targets",
-                            subtitle: "Discover businesses matched to your sales vertical",
-                            icon: "sparkle.magnifyingglass",
-                            accentColor: AppTheme.tealGreen
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal)
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 14) {
+                        NavigationLink {
+                            CompanyDiscoveryView(initialCategory: appState.auth.currentUser?.salesCategory)
+                        } label: {
+                            FeatureCard(
+                                title: "Find Category Targets",
+                                subtitle: "Discover businesses matched to your sales vertical",
+                                icon: "sparkle.magnifyingglass",
+                                accentColor: AppTheme.tealGreen
+                            )
+                        }
+                        .buttonStyle(.plain)
 
-                    CRMMapView()
-                        .padding(.horizontal)
-                        .frame(minHeight: 420)
+                        CRMMapView()
+                    }
+                    .padding(.horizontal)
+                    .padding(.bottom, 16)
                 }
             case .list:
                 listContent
@@ -81,9 +94,25 @@ struct CRMView: View {
         }
         .appBackground()
         .navigationTitle("CRM")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search clients")
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                TutorialHelpButton(tutorialID: AppTutorialID.forCRMViewMode(viewMode))
+            }
+            ToolbarItem(placement: .platformTrailing) {
+                Menu {
+                    Button { showBusinessCard = true } label: {
+                        Label("Business Cards", systemImage: "person.text.rectangle.fill")
+                    }
+                    Button { showImport = true } label: {
+                        Label("Import CRM Data", systemImage: "square.and.arrow.down")
+                    }
+                } label: {
+                    Image(systemName: "square.and.arrow.down.on.square")
+                        .foregroundStyle(AppTheme.electricBlue)
+                }
+            }
             ToolbarItem(placement: .platformTrailing) {
                 Menu {
                     Picker("Sort", selection: $sortOption) {
@@ -105,6 +134,12 @@ struct CRMView: View {
         }
         .sheet(isPresented: $showAddLead) {
             AddLeadView()
+        }
+        .sheet(isPresented: $showImport) {
+            NavigationStack { CRMImportView() }
+        }
+        .sheet(isPresented: $showBusinessCard) {
+            NavigationStack { BusinessCardsHubView() }
         }
     }
 
@@ -147,11 +182,28 @@ struct CRMView: View {
                 .listRowBackground(AppTheme.navyCard.opacity(0.35))
                 .swipeActions(edge: .leading) {
                     Button {
-                        appState.crm.logContact(for: lead.id, type: .call, summary: "Quick call logged")
+                        if !lead.phone.isEmpty {
+                            LeadCommunicationService.call(lead: lead) {
+                                appState.crm.logContact(for: lead.id, type: .call, summary: "Quick call logged")
+                            }
+                        } else {
+                            appState.crm.logContact(for: lead.id, type: .call, summary: "Quick call logged")
+                        }
                     } label: {
                         Label("Call", systemImage: "phone.fill")
                     }
                     .tint(AppTheme.successGreen)
+
+                    if !lead.email.isEmpty {
+                        Button {
+                            LeadCommunicationService.email(lead: lead) {
+                                appState.crm.logContact(for: lead.id, type: .email, summary: "Quick email logged")
+                            }
+                        } label: {
+                            Label("Email", systemImage: "envelope.fill")
+                        }
+                        .tint(AppTheme.electricBlueBright)
+                    }
                 }
                 .swipeActions(edge: .trailing) {
                     Button {
@@ -215,7 +267,7 @@ struct CRMView: View {
             HStack(spacing: 8) {
                 FilterChip(title: "All", isSelected: filterStage == nil) { filterStage = nil }
                 ForEach(DealStage.allCases) { stage in
-                    FilterChip(title: stage.rawValue, isSelected: filterStage == stage) {
+                    FilterChip(title: stage.pipelineShortLabel, isSelected: filterStage == stage) {
                         filterStage = stage
                     }
                 }
@@ -236,18 +288,67 @@ struct CRMHeaderPill: View {
     let color: Color
 
     var body: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 4) {
             Text(value)
-                .font(.caption.bold())
+                .font(.subheadline.bold())
                 .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             Text(label)
-                .font(.caption2)
-                .foregroundStyle(AppTheme.textMuted)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(AppTheme.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .background(color.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .padding(.vertical, 10)
+        .background(color.opacity(0.14))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+struct CRMViewModeChip: View {
+    let title: String
+    let icon: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.caption.bold())
+                Text(title)
+                    .font(.caption.bold())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundStyle(isSelected ? .white : AppTheme.textSecondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(isSelected ? AppTheme.electricBlue : AppTheme.navyCard)
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(isSelected ? AppTheme.electricBlueBright.opacity(0.5) : AppTheme.border, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+extension CRMView.CRMViewMode {
+    var chipIcon: String {
+        switch self {
+        case .dashboard: "square.grid.2x2.fill"
+        case .pipeline: "rectangle.split.3x1.fill"
+        case .activity: "phone.connection"
+        case .tasks: "checklist"
+        case .list: "list.bullet"
+        case .companies: "building.2.fill"
+        case .map: "map.fill"
+        }
     }
 }
 
@@ -303,6 +404,8 @@ struct LeadRow: View {
                             .foregroundStyle(AppTheme.textMuted)
                     }
                 }
+
+                LeadContactLinkRow(lead: lead, compact: true)
             }
 
             Spacer()
@@ -329,9 +432,11 @@ struct StageBadge: View {
     let stage: DealStage
 
     var body: some View {
-        Text(stage.rawValue)
+        Text(stage.pipelineShortLabel)
             .font(.caption2.bold())
             .foregroundStyle(stage.pipelineColor)
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(stage.pipelineColor.opacity(0.15))
@@ -349,6 +454,9 @@ struct FilterChip: View {
             Text(title)
                 .font(.caption.bold())
                 .foregroundStyle(isSelected ? .white : AppTheme.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .fixedSize(horizontal: true, vertical: false)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(isSelected ? AppTheme.electricBlue : AppTheme.navyCard)

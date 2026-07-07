@@ -36,7 +36,7 @@ struct CompanyDiscoveryView: View {
             }
         }
         .appBackground()
-        .navigationTitle("Company Finder")
+        .navigationTitle("\(selectedCategory.rawValue) Finder")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             if let initialCategory {
@@ -102,8 +102,8 @@ struct CompanyDiscoveryView: View {
     private var discoveryControls: some View {
         VStack(spacing: 14) {
             CRMGradientHeader(
-                title: "Discover \(selectedCategory.rawValue)",
-                subtitle: "Category-matched businesses near your GPS lock",
+                title: "Discover Nearby Targets",
+                subtitle: "\(selectedCategory.rawValue) businesses matched to your sales vertical",
                 icon: selectedCategory.icon,
                 accent: selectedCategory.accentColor
             )
@@ -196,25 +196,28 @@ struct CompanyDiscoveryView: View {
                 .disabled(appState.discovery.isSearching)
             }
 
-            HStack(spacing: 8) {
-                Text("Radius")
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.textMuted)
-                ForEach(DiscoveryRadius.allCases) { radius in
-                    Button {
-                        selectedRadius = radius
-                        if hasSearched { Task { await runSearch() } }
-                    } label: {
-                        Text(radius.label)
-                            .font(.caption2.bold())
-                            .foregroundStyle(selectedRadius == radius ? .white : AppTheme.textSecondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(selectedRadius == radius ? AppTheme.electricBlue : AppTheme.navyCard)
-                            .clipShape(Capsule())
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    Text("Radius")
+                        .font(.caption.bold())
+                        .foregroundStyle(AppTheme.textSecondary)
+                        .padding(.trailing, 4)
+                    ForEach(DiscoveryRadius.allCases) { radius in
+                        Button {
+                            selectedRadius = radius
+                            if hasSearched { Task { await runSearch() } }
+                        } label: {
+                            Text(radius.label)
+                                .font(.caption.bold())
+                                .foregroundStyle(selectedRadius == radius ? .white : AppTheme.textSecondary)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(selectedRadius == radius ? AppTheme.electricBlue : AppTheme.navyCard)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
-                Spacer()
             }
 
             notableTargetsSection
@@ -237,7 +240,7 @@ struct CompanyDiscoveryView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Popular \(selectedCategory.rawValue) Targets")
                 .font(.caption.bold())
-                .foregroundStyle(AppTheme.secondaryText(for: colorScheme))
+                .foregroundStyle(AppTheme.textSecondary)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -247,10 +250,10 @@ struct CompanyDiscoveryView: View {
                             Task { await runSearch() }
                         } label: {
                             Text(brand)
-                                .font(.caption2.bold())
+                                .font(.caption.bold())
                                 .foregroundStyle(AppTheme.primaryText(for: colorScheme))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
                                 .background(AppTheme.navyCard)
                                 .clipShape(Capsule())
                                 .overlay(
@@ -258,25 +261,23 @@ struct CompanyDiscoveryView: View {
                                         .stroke(selectedCategory.accentColor.opacity(0.35), lineWidth: 1)
                                 )
                         }
+                        .buttonStyle(.plain)
                     }
-                }
-            }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
                     ForEach(selectedCategory.quickSearchTerms, id: \.self) { term in
                         Button {
                             companySearch = term
                             Task { await runSearch() }
                         } label: {
                             Label(term, systemImage: "magnifyingglass")
-                                .font(.caption2)
+                                .font(.caption.bold())
                                 .foregroundStyle(selectedCategory.accentColor)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
                                 .background(selectedCategory.accentColor.opacity(0.12))
                                 .clipShape(Capsule())
                         }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -286,42 +287,17 @@ struct CompanyDiscoveryView: View {
     private var mapSection: some View {
         Map(position: $cameraPosition) {
             if let userCoord = appState.location.currentCoordinate {
-                Annotation("You", coordinate: userCoord) {
-                    ZStack {
-                        Circle()
-                            .fill(AppTheme.tealGreen.opacity(0.2))
-                            .frame(width: 44, height: 44)
-                        Circle()
-                            .fill(AppTheme.tealGreen)
-                            .frame(width: 14, height: 14)
-                            .overlay(Circle().stroke(.white, lineWidth: 2))
-                    }
+                Annotation("", coordinate: userCoord, anchor: .center) {
+                    MapUserPin()
                 }
             }
 
             ForEach(appState.discovery.results) { prospect in
-                Annotation(prospect.name, coordinate: CLLocationCoordinate2D(latitude: prospect.latitude, longitude: prospect.longitude)) {
+                Annotation("", coordinate: CLLocationCoordinate2D(latitude: prospect.latitude, longitude: prospect.longitude), anchor: .bottom) {
                     Button {
                         selectedProspect = prospect
                     } label: {
-                        VStack(spacing: 2) {
-                            Circle()
-                                .fill(prospect.category.accentColor)
-                                .frame(width: 36, height: 36)
-                                .overlay(
-                                    Image(systemName: prospect.category.icon)
-                                        .font(.caption2)
-                                        .foregroundStyle(.white)
-                                )
-                                .shadow(color: prospect.category.accentColor.opacity(0.4), radius: 4)
-                            Text(prospect.name)
-                                .font(.caption2.bold())
-                                .lineLimit(1)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(.ultraThinMaterial)
-                                .clipShape(Capsule())
-                        }
+                        MapCategoryPin(category: prospect.category)
                     }
                     .buttonStyle(.plain)
                 }
@@ -332,18 +308,22 @@ struct CompanyDiscoveryView: View {
             MapUserLocationButton()
             MapCompass()
         }
-        .frame(height: 300)
+        .frame(height: 280)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(alignment: .top) {
             if appState.discovery.isSearching {
-                Label("Searching \(selectedCategory.rawValue.lowercased())...", systemImage: "sparkle.magnifyingglass")
+                Label("Searching \(selectedCategory.rawValue)...", systemImage: "sparkle.magnifyingglass")
                     .font(.caption.bold())
-                    .padding(.horizontal, 12)
+                    .foregroundStyle(AppTheme.textPrimary)
+                    .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .background(.ultraThinMaterial)
                     .clipShape(Capsule())
-                    .padding(.top, 10)
+                    .padding(.top, 12)
             }
         }
+        .padding(.horizontal)
+        .padding(.bottom, 8)
     }
 
     private var resultsSection: some View {

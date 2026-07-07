@@ -26,6 +26,8 @@ struct PipelineColumn: View {
     @Environment(\.colorScheme) private var colorScheme
     let stage: DealStage
     let leads: [Lead]
+    @State private var certificationAlert = false
+    @State private var certificationMessage = ""
 
     private var columnValue: Double {
         leads.reduce(0) { $0 + $1.dealValue }
@@ -36,9 +38,11 @@ struct PipelineColumn: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Circle().fill(stage.pipelineColor).frame(width: 8, height: 8)
-                    Text(stage.rawValue)
+                    Text(stage.pipelineShortLabel)
                         .font(.caption.bold())
                         .foregroundStyle(AppTheme.primaryText(for: colorScheme))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
                 HStack {
                     Text("\(leads.count)")
@@ -63,7 +67,10 @@ struct PipelineColumn: View {
                     ForEach(DealStage.allCases) { targetStage in
                         if targetStage != lead.dealStage {
                             Button("Move to \(targetStage.rawValue)") {
-                                appState.crm.moveLead(lead.id, to: targetStage)
+                                if !appState.crm.moveLead(lead.id, to: targetStage) {
+                                    certificationMessage = appState.crm.lastStageChangeBlockMessage ?? "Certification required for this stage."
+                                    certificationAlert = true
+                                }
                             }
                         }
                     }
@@ -83,7 +90,12 @@ struct PipelineColumn: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             }
         }
-        .frame(width: 220)
+        .frame(width: 250)
+        .alert("Certification Required", isPresented: $certificationAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(certificationMessage)
+        }
     }
 }
 
@@ -99,36 +111,40 @@ struct PipelineCard: View {
                     .font(.subheadline.bold())
                     .foregroundStyle(AppTheme.primaryText(for: colorScheme))
                     .lineLimit(2)
-                Spacer()
+                    .multilineTextAlignment(.leading)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 0)
             }
 
             Text(lead.name)
                 .font(.caption)
                 .foregroundStyle(AppTheme.secondaryText(for: colorScheme))
                 .lineLimit(1)
+                .minimumScaleFactor(0.85)
 
-            HStack {
+            HStack(spacing: 6) {
                 Text("$\(Int(lead.dealValue))")
                     .font(.caption.bold())
                     .foregroundStyle(AppTheme.successGreen)
-                Spacer()
+                    .lineLimit(1)
+                Spacer(minLength: 0)
                 DealHealthRing(score: lead.dealHealthScore, size: 32)
             }
 
-            HStack {
+            HStack(spacing: 6) {
                 PriorityBadge(priority: lead.priority)
-                Spacer()
+                Spacer(minLength: 0)
                 Text(lead.dealHealthLabel)
                     .font(.caption2.bold())
                     .foregroundStyle(lead.dealHealthColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
 
-            HStack {
-                Text("\(lead.probabilityOfClosing)% close")
-                    .font(.caption2.bold())
-                    .foregroundStyle(stageColor)
-                Spacer()
-            }
+            Text("\(lead.probabilityOfClosing)% close")
+                .font(.caption2.bold())
+                .foregroundStyle(stageColor)
+                .lineLimit(1)
 
             ProgressView(value: Double(lead.probabilityOfClosing), total: 100)
                 .tint(stageColor)

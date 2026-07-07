@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct TrainingHubView: View {
+    @Environment(AppState.self) private var appState
     var showNavigationChrome: Bool = true
 
     var body: some View {
@@ -62,6 +63,37 @@ struct TrainingHubView: View {
                         )
                     }
                     .buttonStyle(.plain)
+
+                    NavigationLink {
+                        ConversationTrainingLogView()
+                    } label: {
+                        FeatureCard(
+                            title: "Activity Log",
+                            subtitle: "Saved roleplays with scores and chat history you can continue",
+                            icon: "clock.arrow.circlepath",
+                            accentColor: AppTheme.tealGreen
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    let inProgress = appState.training.inProgressSessions(for: appState.auth.currentUser?.id ?? "")
+                    if let session = inProgress.first {
+                        NavigationLink {
+                            VoiceRoleplayView(
+                                scenario: session.scenario,
+                                personality: session.personality,
+                                resumeSession: session
+                            )
+                        } label: {
+                            FeatureCard(
+                                title: "Continue Roleplay",
+                                subtitle: "\(session.scenario.rawValue) · \(session.transcript.count) turns so far",
+                                icon: "play.circle.fill",
+                                accentColor: AppTheme.electricBlueBright
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .padding()
             }

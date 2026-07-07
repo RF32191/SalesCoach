@@ -33,6 +33,7 @@ enum AppConfig {
         isRailwayConfigured || isOpenAIConfigured
     }
 
-    static let appName = "Sales Coach"
+    static let appName = "Sales Coach AI"
+    static let productTagline = "AI Revenue Operating System"
     static let demoModeEnabled = true
 }

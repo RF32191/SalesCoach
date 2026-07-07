@@ -649,6 +649,194 @@ final class OpenAIService {
         )
     }
 
+    func requestWinLossAutopsy(lead: Lead, won: Bool, finalValue: Double, reason: String = "") async throws -> WinLossAutopsy {
+        if AppConfig.isRailwayConfigured || AppConfig.isOpenAIConfigured {
+            let leadData = try encodeLead(lead)
+            let json = try await postRailway(path: "crm/win-loss-autopsy", body: [
+                "lead": leadData,
+                "won": won,
+                "finalValue": finalValue,
+                "reason": reason
+            ])
+            return parseWinLossAutopsy(json)
+        }
+        throw OpenAIError.invalidResponse
+    }
+
+    func requestSalesScript(type: ScriptType, lead: Lead?, category: SalesCategory?, customPrompt: String) async throws -> String {
+        if AppConfig.isRailwayConfigured {
+            let json = try await postRailway(path: "office/generate-script", body: [
+                "scriptType": type.rawValue,
+                "lead": lead.flatMap { try? encodeLead($0) } as Any,
+                "category": category?.rawValue ?? "",
+                "customPrompt": customPrompt
+            ])
+            if let script = json["script"] as? String {
+                recordTokens(from: json, fallbackOutput: script)
+                return script
+            }
+        }
+        let prompt = "Write a \(type.rawValue) sales script. \(customPrompt). Client: \(lead?.name ?? "prospect"). Return script text only."
+        return try await requestCompletion(messages: [
+            ["role": "system", "content": coachSystemPrompt],
+            ["role": "user", "content": prompt]
+        ])
+    }
+
+    func requestComplaintResponse(complaint: ClientComplaint, lead: Lead?) async throws -> String {
+        if AppConfig.isRailwayConfigured {
+            let json = try await postRailway(path: "office/complaint-response", body: [
+                "summary": complaint.summary,
+                "details": complaint.details,
+                "clientName": complaint.clientName,
+                "priority": complaint.priority.rawValue
+            ])
+            if let response = json["response"] as? String {
+                recordTokens(from: json, fallbackOutput: response)
+                return response
+            }
+        }
+        return "Hi \(complaint.clientName), thank you for sharing this. I understand your concern regarding \(complaint.summary). I'd like to resolve this promptly — can we schedule a call within 24 hours?"
+    }
+
+    func requestBillingAgentReview(tier: SubscriptionTier, tokensUsed: Int, roleplaysUsed: Int, discoveryUsed: Int) async throws -> (summary: String, recommendedTier: SubscriptionTier, actions: [BillingAgentAction], tokensUsed: Int) {
+        if AppConfig.isRailwayConfigured {
+            let json = try await postRailway(path: "office/billing-agent", body: [
+                "tier": tier.rawValue,
+                "tokensUsed": tokensUsed,
+                "roleplaysUsed": roleplaysUsed,
+                "discoveryUsed": discoveryUsed
+            ])
+            let summary = json["summary"] as? String ?? "Review complete."
+            let tierName = json["recommendedTier"] as? String ?? tier.rawValue
+            let recommended = SubscriptionTier.allCases.first { $0.rawValue == tierName } ?? tier
+            let actions = (json["actions"] as? [[String: Any]] ?? []).map { item in
+                BillingAgentAction(
+                    type: .optimizeUsage,
+                    title: item["title"] as? String ?? "Suggestion",
+                    detail: item["detail"] as? String ?? ""
+                )
+            }
+            let apiTokens = json["tokensUsed"] as? Int ?? AIBillingFeature.billingAgentReview.estimatedTokens
+            recordTokens(from: json, fallbackOutput: summary)
+            return (summary, recommended, actions, apiTokens)
+        }
+        throw OpenAIError.invalidResponse
+    }
+
+    func requestManagerBrief(pipeline: Double, winRate: Double, staleCount: Int, overdueCount: Int, avgScore: Int) async throws -> ManagerMorningBrief {
+        if AppConfig.isRailwayConfigured {
+            let json = try await postRailway(path: "office/manager-brief", body: [
+                "pipeline": pipeline,
+                "winRate": winRate,
+                "staleCount": staleCount,
+                "overdueCount": overdueCount,
+                "avgScore": avgScore
+            ])
+            let brief = ManagerMorningBrief(
+                headline: json["headline"] as? String ?? "Morning brief",
+                repHighlights: json["repHighlights"] as? [String] ?? [],
+                coachingAssignments: json["coachingAssignments"] as? [String] ?? [],
+                pipelineAlerts: json["pipelineAlerts"] as? [String] ?? [],
+                teamWins: json["teamWins"] as? [String] ?? []
+            )
+            recordTokens(from: json, fallbackOutput: brief.headline)
+            return brief
+        }
+        throw OpenAIError.invalidResponse
+    }
+
+    func requestBusinessIntel(prompt: String) async throws -> String {
+        if AppConfig.isRailwayConfigured {
+            let json = try await postRailway(path: "platform/bi-query", body: ["question": prompt])
+            if let answer = json["answer"] as? String {
+                recordTokens(from: json, fallbackOutput: answer)
+                return answer
+            }
+        }
+        return try await requestCompletion(messages: [
+            ["role": "system", "content": coachSystemPrompt],
+            ["role": "user", "content": prompt]
+        ])
+    }
+
+    func requestProposal(lead: Lead, amount: Double, scope: String) async throws -> String {
+        if AppConfig.isRailwayConfigured {
+            let json = try await postRailway(path: "platform/proposal", body: [
+                "clientName": lead.name,
+                "company": lead.company,
+                "amount": amount,
+                "scope": scope,
+                "notes": lead.notes
+            ])
+            if let proposal = json["proposal"] as? String {
+                recordTokens(from: json, fallbackOutput: proposal)
+                return proposal
+            }
+        }
+        let prompt = "Write a professional sales proposal for \(lead.name) at \(lead.company). Amount: $\(Int(amount)). Scope: \(scope). Notes: \(lead.notes)"
+        return try await requestCompletion(messages: [
+            ["role": "system", "content": coachSystemPrompt],
+            ["role": "user", "content": prompt]
+        ])
+    }
+
+    func requestEmailDraft(type: String, lead: Lead) async throws -> String {
+        if AppConfig.isRailwayConfigured {
+            let json = try await postRailway(path: "platform/email", body: [
+                "type": type,
+                "clientName": lead.name,
+                "company": lead.company,
+                "stage": lead.dealStage.rawValue
+            ])
+            if let email = json["email"] as? String {
+                recordTokens(from: json, fallbackOutput: email)
+                return email
+            }
+        }
+        let prompt = "Write a \(type) email for \(lead.name) at \(lead.company). Stage: \(lead.dealStage.rawValue). Ready to send."
+        return try await requestCompletion(messages: [
+            ["role": "system", "content": coachSystemPrompt],
+            ["role": "user", "content": prompt]
+        ])
+    }
+
+    func requestLiveCopilotTip(lead: Lead, transcript: String, category: SalesCategory?) async throws -> String {
+        if AppConfig.isRailwayConfigured {
+            let json = try await postRailway(path: "platform/live-copilot", body: [
+                "clientName": lead.name,
+                "company": lead.company,
+                "stage": lead.dealStage.rawValue,
+                "transcript": transcript,
+                "category": category?.rawValue ?? "General"
+            ])
+            if let tip = json["tip"] as? String {
+                recordTokens(from: json, fallbackOutput: tip)
+                return tip
+            }
+        }
+        let prompt = """
+        Live sales call coaching. Client: \(lead.name) at \(lead.company). Stage: \(lead.dealStage.rawValue).
+        Rep just said: "\(transcript)"
+        Give ONE short coaching tip (1-2 sentences) for what to say or ask next. Be specific and actionable.
+        """
+        return try await requestCompletion(messages: [
+            ["role": "system", "content": coachSystemPrompt],
+            ["role": "user", "content": prompt]
+        ])
+    }
+
+    private func parseWinLossAutopsy(_ json: [String: Any]) -> WinLossAutopsy {
+        WinLossAutopsy(
+            headline: json["headline"] as? String ?? "Deal review",
+            whatWorked: json["whatWorked"] as? [String] ?? [],
+            whatToImprove: json["whatToImprove"] as? [String] ?? [],
+            playbookSnippet: json["playbookSnippet"] as? String ?? "",
+            recommendedDrill: json["recommendedDrill"] as? String ?? "Objection handling practice",
+            nextActions: json["nextActions"] as? [String] ?? []
+        )
+    }
+
     private func parsePreCallBriefing(_ json: [String: Any]) -> PreCallBriefing {
         PreCallBriefing(
             openingLine: json["openingLine"] as? String ?? "",
@@ -999,9 +1187,9 @@ final class OpenAIService {
 
             Hi \(lead.name),
 
-            I wanted to follow up on our recent conversation. Based on what you shared, I believe we can help \(lead.company) achieve meaningful results at the \(lead.dealStage.rawValue) stage.
+            I wanted to follow up on our recent conversation. Based on what you shared, I believe we can help \(lead.company) at the \(lead.dealStage.rawValue) stage.
 
-            Would you be open to a brief call this week to explore next steps?
+            Would you be open to a brief call this week?
 
             Best regards
             """

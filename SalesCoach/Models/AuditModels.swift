@@ -85,6 +85,9 @@ struct ClosedOrder: Codable, Identifiable, Equatable {
     var lineItems: [OrderLineItem]
     var notes: String
     var source: AuditSource
+    var commissionRate: Double
+
+    var commissionAmount: Double { finalValue * commissionRate }
 
     init(
         id: String = UUID().uuidString,
@@ -96,7 +99,8 @@ struct ClosedOrder: Codable, Identifiable, Equatable {
         closedAt: Date = .now,
         lineItems: [OrderLineItem] = [],
         notes: String = "",
-        source: AuditSource = .manual
+        source: AuditSource = .manual,
+        commissionRate: Double = 0.10
     ) {
         self.id = id
         self.leadId = leadId
@@ -108,5 +112,25 @@ struct ClosedOrder: Codable, Identifiable, Equatable {
         self.lineItems = lineItems
         self.notes = notes
         self.source = source
+        self.commissionRate = commissionRate
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, leadId, ownerId, clientName, company, finalValue, closedAt, lineItems, notes, source, commissionRate
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        leadId = try c.decode(String.self, forKey: .leadId)
+        ownerId = try c.decode(String.self, forKey: .ownerId)
+        clientName = try c.decode(String.self, forKey: .clientName)
+        company = try c.decodeIfPresent(String.self, forKey: .company) ?? ""
+        finalValue = try c.decode(Double.self, forKey: .finalValue)
+        closedAt = try c.decodeIfPresent(Date.self, forKey: .closedAt) ?? .now
+        lineItems = try c.decodeIfPresent([OrderLineItem].self, forKey: .lineItems) ?? []
+        notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        source = try c.decodeIfPresent(AuditSource.self, forKey: .source) ?? .manual
+        commissionRate = try c.decodeIfPresent(Double.self, forKey: .commissionRate) ?? 0.10
     }
 }

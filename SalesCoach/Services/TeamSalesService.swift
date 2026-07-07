@@ -4,22 +4,35 @@ import Foundation
 @Observable
 final class TeamSalesService {
     private(set) var sales: [TeamSale] = []
-    private let storageKey = "salescoach_team_sales"
+    private(set) var updates: [TeamFeedUpdate] = []
+
+    private let salesKey = "salescoach_team_sales"
+    private let updatesKey = "salescoach_team_feed_updates"
 
     func load(for teamId: String) {
-        guard let data = UserDefaults.standard.data(forKey: storageKey),
-              let stored = try? JSONDecoder().decode([TeamSale].self, from: data) else {
-            sales = []
-            return
-        }
-        sales = stored
+        sales = decodeList(TeamSale.self, key: salesKey)
+            .filter { $0.teamId == teamId }
+            .sorted { $0.loggedAt > $1.loggedAt }
+        updates = decodeList(TeamFeedUpdate.self, key: updatesKey)
             .filter { $0.teamId == teamId }
             .sorted { $0.loggedAt > $1.loggedAt }
     }
 
     func log(_ sale: TeamSale) {
         sales.insert(sale, at: 0)
-        save(for: sale.teamId)
+        persistSales()
+    }
+
+    func postUpdate(_ update: TeamFeedUpdate) {
+        updates.insert(update, at: 0)
+        persistUpdates()
+    }
+
+    func feed(for teamId: String) -> [TeamFeedItem] {
+        let items: [TeamFeedItem] =
+            sales.filter { $0.teamId == teamId }.map { .sale($0) } +
+            updates.filter { $0.teamId == teamId }.map { .update($0) }
+        return items.sorted { $0.loggedAt > $1.loggedAt }
     }
 
     func salesThisMonth(for teamId: String) -> [TeamSale] {
@@ -33,35 +46,44 @@ final class TeamSalesService {
         salesThisMonth(for: teamId).reduce(0) { $0 + $1.amount }
     }
 
-    func salesByRep(for teamId: String) -> [(repName: String, total: Double, count: Int)] {
-        let monthSales = salesThisMonth(for: teamId)
-        var grouped: [String: (total: Double, count: Int)] = [:]
-        for sale in monthSales {
-            let current = grouped[sale.repName, default: (0, 0)]
-            grouped[sale.repName] = (current.total + sale.amount, current.count + 1)
-        }
-        return grouped
-            .map { (repName: $0.key, total: $0.value.total, count: $0.value.count) }
-            .sorted { $0.total > $1.total }
-    }
-
     func clear(for teamId: String) {
-        sales.removeAll { $0.teamId == teamId }
-        save(for: teamId)
+        var allSales = decodeList(TeamSale.self, key: salesKey)
+        allSales.removeAll { $0.teamId == teamId }
+        if let data = try? JSONEncoder().encode(allSales) {
+            UserDefaults.standard.set(data, forKey: salesKey)
+        }
+        var allUpdates = decodeList(TeamFeedUpdate.self, key: updatesKey)
+        allUpdates.removeAll { $0.teamId == teamId }
+        if let data = try? JSONEncoder().encode(allUpdates) {
+            UserDefaults.standard.set(data, forKey: updatesKey)
+        }
+        sales = []
+        updates = []
     }
 
-    private func save(for teamId: String) {
-        guard let data = UserDefaults.standard.data(forKey: storageKey),
-              var all = try? JSONDecoder().decode([TeamSale].self, from: data) else {
-            if let data = try? JSONEncoder().encode(sales) {
-                UserDefaults.standard.set(data, forKey: storageKey)
-            }
-            return
-        }
-        all.removeAll { $0.teamId == teamId }
+    private func persistSales() {
+        var all = decodeList(TeamSale.self, key: salesKey)
+        let teamIds = Set(sales.map(\.teamId))
+        all.removeAll { teamIds.contains($0.teamId) }
         all.append(contentsOf: sales)
         if let data = try? JSONEncoder().encode(all) {
-            UserDefaults.standard.set(data, forKey: storageKey)
+            UserDefaults.standard.set(data, forKey: salesKey)
         }
+    }
+
+    private func persistUpdates() {
+        var all = decodeList(TeamFeedUpdate.self, key: updatesKey)
+        let teamIds = Set(updates.map(\.teamId))
+        all.removeAll { teamIds.contains($0.teamId) }
+        all.append(contentsOf: updates)
+        if let data = try? JSONEncoder().encode(all) {
+            UserDefaults.standard.set(data, forKey: updatesKey)
+        }
+    }
+
+    private func decodeList<T: Decodable>(_ type: T.Type, key: String) -> [T] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let stored = try? JSONDecoder().decode([T].self, from: data) else { return [] }
+        return stored
     }
 }

@@ -60,8 +60,8 @@ final class DealCoachingService {
     func scenarioForLead(_ lead: Lead) -> TrainingScenario {
         switch lead.dealStage {
         case .newLead, .contacted: return .coldCall
-        case .qualified, .proposalSent: return .followUp
-        case .negotiation: return .closing
+        case .qualified, .discovery, .demo: return .followUp
+        case .proposalSent, .negotiation, .legal, .procurement: return .closing
         case .won: return .upsell
         case .lost: return .lostCustomer
         }

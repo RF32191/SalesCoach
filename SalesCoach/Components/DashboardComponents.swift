@@ -135,6 +135,8 @@ struct CompactModuleButton: View {
                 .foregroundStyle(AppTheme.primaryText(for: colorScheme))
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
+                .minimumScaleFactor(0.8)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)

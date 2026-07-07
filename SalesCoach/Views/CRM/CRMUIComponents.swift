@@ -28,9 +28,12 @@ struct CRMGradientHeader: View {
                 Text(title)
                     .font(.headline)
                     .foregroundStyle(AppTheme.primaryText(for: colorScheme))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.9)
                 Text(subtitle)
                     .font(.caption)
-                    .foregroundStyle(AppTheme.secondaryText(for: colorScheme))
+                    .foregroundStyle(AppTheme.textSecondary)
+                    .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
 

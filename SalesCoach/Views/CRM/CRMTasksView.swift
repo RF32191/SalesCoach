@@ -197,6 +197,8 @@ struct CRMTaskRow: View {
 
             Spacer()
 
+            LeadContactLinkRow(lead: lead, compact: true)
+
             if let date = lead.nextFollowUpDate {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(date.formatted(date: .abbreviated, time: .omitted))
@@ -221,6 +223,8 @@ struct PriorityBadge: View {
         Label(priority.rawValue, systemImage: priority.icon)
             .font(.caption2.bold())
             .foregroundStyle(priority.color)
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(priority.color.opacity(0.12))
@@ -249,8 +253,10 @@ struct DealHealthRing: View {
                 .stroke(color, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             Text("\(score)")
-                .font(.caption2.bold())
+                .font(.system(size: max(10, size * 0.26), weight: .bold))
                 .foregroundStyle(color)
+                .minimumScaleFactor(0.7)
+                .lineLimit(1)
         }
         .frame(width: size, height: size)
     }
@@ -260,6 +266,7 @@ struct CRMQuickActionsBar: View {
     let lead: Lead
     var onCall: (() -> Void)? = nil
     var onEmail: (() -> Void)? = nil
+    var onText: (() -> Void)? = nil
     var onLogCall: () -> Void
     var onLogEmail: () -> Void
     var onScheduleFollowUp: () -> Void
@@ -274,36 +281,25 @@ struct CRMQuickActionsBar: View {
                 QuickActionButton(title: "Email", icon: "envelope.fill", color: AppTheme.electricBlueBright) {
                     onEmail?() ?? onLogEmail()
                 }
+                if !lead.phone.isEmpty {
+                    QuickActionButton(title: "Text", icon: "message.fill", color: AppTheme.tealGreen) {
+                        onText?()
+                    }
+                }
                 QuickActionButton(title: "Schedule", icon: "calendar.badge.plus", color: AppTheme.warningOrange, action: onScheduleFollowUp)
-                QuickActionButton(title: "AI Draft", icon: "sparkles", color: AppTheme.tealGreen, action: onGenerateFollowUp)
             }
 
             HStack(spacing: 10) {
-                if !lead.phone.isEmpty,
-                   let url = URL(string: "tel://\(lead.phone.filter { $0.isNumber || $0 == "+" })") {
-                    Link(destination: url) {
-                        Label("Dial", systemImage: "phone.connection")
-                            .font(.caption2.bold())
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .foregroundStyle(AppTheme.successGreen)
-                            .background(AppTheme.successGreen.opacity(0.12))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
+                QuickActionButton(title: "AI Draft", icon: "sparkles", color: AppTheme.tealGreen, action: onGenerateFollowUp)
+                if !lead.phone.isEmpty {
+                    QuickActionButton(title: "Log Call", icon: "phone.arrow.up.right", color: AppTheme.successGreen.opacity(0.85), action: onLogCall)
                 }
-                if !lead.email.isEmpty, let url = URL(string: "mailto:\(lead.email)") {
-                    Link(destination: url) {
-                        Label("Mail", systemImage: "envelope")
-                            .font(.caption2.bold())
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .foregroundStyle(AppTheme.electricBlueBright)
-                            .background(AppTheme.electricBlueBright.opacity(0.12))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
+                if !lead.email.isEmpty {
+                    QuickActionButton(title: "Log Email", icon: "envelope.arrow.triangle.branch", color: AppTheme.electricBlueBright.opacity(0.85), action: onLogEmail)
                 }
             }
         }
+        .cardStyle()
     }
 }
 
@@ -320,6 +316,8 @@ struct QuickActionButton: View {
                     .font(.subheadline)
                 Text(title)
                     .font(.caption2.bold())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
             .foregroundStyle(color)
             .frame(maxWidth: .infinity)

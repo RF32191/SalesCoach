@@ -6,6 +6,7 @@ struct VoiceRoleplayView: View {
 
     let scenario: TrainingScenario
     let personality: CustomerPersonality
+    var resumeSession: TrainingSession? = nil
 
     @State private var sessionStarted = false
     @State private var elapsedSeconds = 0
@@ -105,6 +106,9 @@ struct VoiceRoleplayView: View {
             appState.voice.onUtteranceFinished = nil
             appState.voice.cancelListening()
             appState.voice.stopSpeaking()
+            if sessionStarted && !isEnding {
+                appState.training.pauseActiveSession(durationSeconds: elapsedSeconds)
+            }
         }
         .navigationDestination(isPresented: $showReport) {
             if let report = scoreReport, let session = appState.training.lastCompletedSession {
@@ -198,13 +202,25 @@ struct VoiceRoleplayView: View {
 
     private func startSession() {
         guard let userId = appState.auth.currentUser?.id else { return }
-        _ = appState.training.startSession(userId: userId, scenario: scenario, personality: personality)
+
+        if let resumeSession {
+            appState.training.resumeSession(resumeSession)
+            elapsedSeconds = resumeSession.durationSeconds
+            lastAIReply = resumeSession.transcript.last(where: { $0.speaker == "Customer" })?.text ?? ""
+        } else {
+            _ = appState.training.startSession(userId: userId, scenario: scenario, personality: personality)
+            appState.training.setInitialSuggestion("Open strong: state who you are, why you're calling, and ask one discovery question.")
+        }
+
         sessionStarted = true
-        appState.training.setInitialSuggestion("Open strong: state who you are, why you're calling, and ask one discovery question.")
 
         Task {
             await appState.voice.requestPermissions()
-            await deliverCustomerOpening()
+            if resumeSession?.transcript.isEmpty != false {
+                await deliverCustomerOpening()
+            } else {
+                beginListeningForUser()
+            }
         }
 
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in

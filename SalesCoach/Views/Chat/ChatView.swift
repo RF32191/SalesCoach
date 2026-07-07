@@ -3,10 +3,13 @@ import SwiftUI
 struct ChatView: View {
     @Environment(AppState.self) private var appState
     var embedded: Bool = false
+    var prefillMessage: String = ""
+    var autoSend: Bool = false
 
     @State private var messageText = ""
     @State private var showHistory = false
     @State private var showLimitAlert = false
+    @State private var didAutoSend = false
 
     var body: some View {
         Group {
@@ -34,9 +37,9 @@ struct ChatView: View {
             }
 
             if !AppConfig.isAIConfigured {
-                Text("Connect Railway AI in Xcode scheme env vars for live coaching.")
+                Text("Team posts work offline. AI coaching is optional — enable Railway only if you want script help.")
                     .font(.caption2)
-                    .foregroundStyle(AppTheme.warningOrange)
+                    .foregroundStyle(AppTheme.textSecondary)
                     .padding(.horizontal)
                     .padding(.top, 4)
             }
@@ -44,7 +47,7 @@ struct ChatView: View {
             inputBar
         }
         .appBackground()
-        .navigationTitle("Team Sales Coach")
+        .navigationTitle("Team Sales Log")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
@@ -57,13 +60,23 @@ struct ChatView: View {
                         Image(systemName: showHistory ? "bubble.left.fill" : "clock.arrow.circlepath")
                     }
                 }
-            }
-            ToolbarItem(placement: embedded ? .topBarTrailing : .platformTrailing) {
-                Button {
-                    appState.chat.startNewConversation(userId: appState.auth.currentUser?.id ?? "")
-                    showHistory = false
-                } label: {
-                    Image(systemName: "square.and.pencil")
+                ToolbarItem(placement: embedded ? .topBarTrailing : .platformTrailing) {
+                    HStack(spacing: 16) {
+                        if !embedded {
+                            NavigationLink {
+                                ConversationTrainingLogView()
+                            } label: {
+                                Image(systemName: "list.bullet.rectangle")
+                            }
+                            .accessibilityLabel("Activity Log")
+                        }
+                        Button {
+                            appState.chat.startNewConversation(userId: appState.auth.currentUser?.id ?? "")
+                            showHistory = false
+                        } label: {
+                            Image(systemName: "square.and.pencil")
+                        }
+                    }
                 }
             }
         }
@@ -71,6 +84,16 @@ struct ChatView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("You've used your AI tokens or chat limit for this month. Upgrade your plan for more.")
+        }
+        .onAppear {
+            appState.chat.ensureCurrentConversation(for: appState.auth.currentUser?.id ?? "")
+            if messageText.isEmpty, !prefillMessage.isEmpty {
+                messageText = prefillMessage
+            }
+            if autoSend, !didAutoSend, !prefillMessage.isEmpty {
+                didAutoSend = true
+                send(prefillMessage)
+            }
         }
     }
 
@@ -91,7 +114,7 @@ struct ChatView: View {
                         HStack {
                             ProgressView()
                                 .tint(AppTheme.electricBlue)
-                            Text("Coach is thinking...")
+                            Text("Posting to team...")
                                 .font(.caption)
                                 .foregroundStyle(AppTheme.textSecondary)
                             Spacer()
@@ -111,13 +134,13 @@ struct ChatView: View {
 
     private var welcomeMessage: some View {
         VStack(spacing: 16) {
-            Image(systemName: "brain.head.profile.fill")
+            Image(systemName: "person.3.fill")
                 .font(.system(size: 48))
-                .foregroundStyle(AppTheme.electricBlue)
-            Text("Team Sales Coach")
+                .foregroundStyle(AppTheme.tealGreen)
+            Text("Team Sales Log")
                 .font(.title3.bold())
                 .foregroundStyle(AppTheme.textPrimary)
-            Text("Log closed deals for your team, get coaching on objections, and celebrate wins together. Clients never need this app.")
+            Text("Share closed deals and updates with reps invited by your company host. Clients never need this app — no API key required for team posts.")
                 .font(.subheadline)
                 .foregroundStyle(AppTheme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -125,8 +148,7 @@ struct ChatView: View {
             VStack(spacing: 8) {
                 SuggestionChip(text: "Closed $8k with Acme Corp today") { send($0) }
                 SuggestionChip(text: "Just sold $12k to TechFlow") { send($0) }
-                SuggestionChip(text: "Help me handle price objections") { send($0) }
-                SuggestionChip(text: "Write a win announcement for the team") { send($0) }
+                SuggestionChip(text: "Big win — signed renewal with Northwind") { send($0) }
             }
         }
         .padding(.vertical, 32)
@@ -134,25 +156,45 @@ struct ChatView: View {
 
     private var conversationHistory: some View {
         List {
-            ForEach(appState.chat.conversations) { conversation in
-                Button {
-                    appState.chat.selectConversation(conversation)
-                    showHistory = false
-                } label: {
+            if let current = appState.chat.currentConversation, !current.messages.isEmpty {
+                Section("Current") {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(conversation.title)
-                            .font(.headline)
-                            .foregroundStyle(AppTheme.textPrimary)
-                        Text(conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                        Text(current.title).font(.headline)
+                        Text("\(current.messages.count) messages")
                             .font(.caption)
                             .foregroundStyle(AppTheme.textSecondary)
                     }
                 }
                 .listRowBackground(AppTheme.navyCard)
             }
-            .onDelete { indexSet in
-                for index in indexSet {
-                    appState.chat.deleteConversation(appState.chat.conversations[index])
+
+            Section("Saved Conversations") {
+                ForEach(appState.chat.conversations) { conversation in
+                    Button {
+                        appState.chat.selectConversation(conversation)
+                        showHistory = false
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(conversation.title)
+                                .font(.headline)
+                                .foregroundStyle(AppTheme.textPrimary)
+                            if let last = conversation.messages.last {
+                                Text(last.content)
+                                    .font(.caption)
+                                    .foregroundStyle(AppTheme.textSecondary)
+                                    .lineLimit(2)
+                            }
+                            Text("\(conversation.messages.count) messages · \(conversation.updatedAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2)
+                                .foregroundStyle(AppTheme.textMuted)
+                        }
+                    }
+                    .listRowBackground(AppTheme.navyCard)
+                }
+                .onDelete { indexSet in
+                    for index in indexSet {
+                        appState.chat.deleteConversation(appState.chat.conversations[index])
+                    }
                 }
             }
         }
@@ -161,7 +203,7 @@ struct ChatView: View {
 
     private var inputBar: some View {
         HStack(spacing: 12) {
-            TextField("Log a sale or ask for coaching...", text: $messageText, axis: .vertical)
+            TextField("Share a sale or team update...", text: $messageText, axis: .vertical)
                 .lineLimit(1...4)
                 .padding(12)
                 .background(AppTheme.navyCard)
@@ -189,23 +231,27 @@ struct ChatView: View {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        guard appState.subscription.canSendChat() else {
-            showLimitAlert = true
-            return
-        }
-        guard appState.subscription.canUseAI(estimatedTokens: SubscriptionService.estimateTokens(input: trimmed)) else {
-            showLimitAlert = true
-            return
+        let needsAI = ChatService.isCoachingRequest(trimmed)
+        if needsAI {
+            guard appState.subscription.canSendChat() else {
+                showLimitAlert = true
+                return
+            }
+            guard appState.subscription.canUseAI(estimatedTokens: SubscriptionService.estimateTokens(input: trimmed)) else {
+                showLimitAlert = true
+                return
+            }
+            appState.subscription.recordChatMessage()
         }
 
         messageText = ""
-        appState.subscription.recordChatMessage()
         Task {
             await appState.chat.sendMessage(
                 trimmed,
                 userId: appState.auth.currentUser?.id ?? "",
                 repName: appState.auth.currentUser?.fullName ?? "Rep",
                 teamId: appState.auth.currentUser?.teamId ?? "solo",
+                companyName: appState.auth.currentUser?.companyName,
                 teamMembers: appState.team.members,
                 crm: appState.crm,
                 audit: appState.audit,

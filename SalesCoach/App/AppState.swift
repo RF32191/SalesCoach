@@ -19,10 +19,21 @@ final class AppState {
     let audit = AuditService()
     let calendar = CalendarService()
     let teamSales = TeamSalesService()
+    let commission = CommissionService()
+    let crmHub = CRMHubService()
+    let office = OfficeService()
+    let scripts = ScriptMakerService()
+    let billingAgent = AutonomousBillingService()
+    let tokenBilling = TokenBillingService()
+    let revenueOS = RevenueOSDashboardService()
+    let platform = PlatformFeatureService()
+    let integrations = IntegrationService()
+    let digitalCard = DigitalBusinessCardService()
 
     var nearbyLeadBriefing: Lead?
 
     init() {
+        crm.integrations = integrations
         crm.syncGeofencing = { [weak self] leads in
             self?.location.startGeofencing(for: leads)
         }
@@ -61,6 +72,16 @@ final class AppState {
         crm.onCalendarFollowUp = { [weak self] title, date, notes in
             self?.calendar.addFollowUpEvent(title: title, date: date, notes: notes)
         }
+        crm.defaultCommissionRate = commission.settings.defaultCommissionRate
+        crm.stageChangeGate = { [weak self] stage, userId in
+            guard let self else { return (true, "") }
+            return StandoutCoachingService.shared.certificationAllowsStage(
+                stage,
+                userId: userId,
+                training: self.training,
+                certifications: self.certifications
+            )
+        }
     }
 
     func loadUserData() {
@@ -75,11 +96,32 @@ final class AppState {
         teamGoals.load(for: user.id)
         gamification.load(for: user.id)
         audit.load(for: user.id)
+        commission.load(for: user.id)
+        crmHub.load(for: user.id)
+        crm.defaultCommissionRate = commission.settings.defaultCommissionRate
+        office.load(for: user.id)
+        office.syncFromAudit(userId: user.id, orders: audit.closedOrders)
+        scripts.load(for: user.id)
+        billingAgent.load(for: user.id)
+        tokenBilling.load(for: user.id)
+        revenueOS.load(for: user.id)
+        platform.load(for: user.id)
+        digitalCard.load(for: user.id, profile: user)
         teamSales.load(for: user.teamId ?? "solo")
         crm.loadTasks(for: user.id)
         Task { await calendar.requestAccess() }
         certifications.evaluate(sessions: training.sessions.filter { $0.userId == user.id })
         location.startGeofencing(for: crm.leads.filter { $0.location.pinReminderEnabled && $0.location.hasCoordinates })
+        Task {
+            await billingAgent.runAutonomousReview(
+                userId: user.id,
+                usage: subscription.usage,
+                training: training,
+                subscription: subscription,
+                tokenBilling: tokenBilling,
+                office: office
+            )
+        }
     }
 
     func loadExampleData() {
@@ -111,5 +153,16 @@ final class AppState {
         location.requestAuthorization()
         location.requestAlwaysAuthorizationIfNeeded()
         await voice.requestPermissions()
+    }
+
+    func recordTokenCharge(feature: AIBillingFeature, tokens: Int) {
+        guard let userId = auth.currentUser?.id else { return }
+        tokenBilling.charge(
+            feature: feature,
+            tokensUsed: tokens,
+            userId: userId,
+            subscription: subscription,
+            office: office
+        )
     }
 }

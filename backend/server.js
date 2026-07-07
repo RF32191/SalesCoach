@@ -18,6 +18,32 @@ function getOpenAI() {
 }
 const API_SECRET = process.env.API_SECRET || "";
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const TOKEN_RATE_USD = Number(process.env.TOKEN_RATE_USD || 0.002);
+
+const FEATURE_TOKEN_COSTS = {
+  "script-generation": { min: 180, label: "Script Generation" },
+  "complaint-response": { min: 120, label: "Complaint Response" },
+  "billing-agent": { min: 250, label: "Billing Agent Review" },
+  "manager-brief": { min: 300, label: "Manager Brief" },
+  chat: { min: 80, label: "Chat Coach" },
+  roleplay: { min: 200, label: "Roleplay" },
+  "crm-assist": { min: 100, label: "CRM Assist" },
+};
+
+function buildTokenCharge(feature, tokensUsed, tier = "Free") {
+  const min = FEATURE_TOKEN_COSTS[feature]?.min ?? 100;
+  const billableTokens = Math.max(tokensUsed || 0, min);
+  const chargeUSD = Number(((billableTokens / 1000) * TOKEN_RATE_USD).toFixed(4));
+  return {
+    feature,
+    featureLabel: FEATURE_TOKEN_COSTS[feature]?.label || feature,
+    tokensUsed: tokensUsed || 0,
+    billableTokens,
+    chargeUSD,
+    ratePer1k: TOKEN_RATE_USD,
+    tier,
+  };
+}
 
 const COACH_PROMPT =
   "You are Sales Coach, an expert AI sales trainer and CRM assistant. Help users write scripts, improve pitches, handle objections, and close deals. Be concise, actionable, and encouraging.";
@@ -44,7 +70,54 @@ app.get("/health", (_req, res) => {
     service: "salescoach-api",
     openai: openaiConfigured,
     openaiKeyValid: openaiConfigured,
+    tokenBilling: {
+      ratePer1k: TOKEN_RATE_USD,
+      features: FEATURE_TOKEN_COSTS,
+    },
   });
+});
+
+app.get("/api/billing/token-rates", (_req, res) => {
+  res.json({
+    ratePer1k: TOKEN_RATE_USD,
+    features: FEATURE_TOKEN_COSTS,
+  });
+});
+
+app.post("/api/billing/charge-preview", (req, res) => {
+  const { feature, tokensUsed, tier } = req.body;
+  if (!feature) {
+    return res.status(400).json({ error: "feature required" });
+  }
+  res.json(buildTokenCharge(feature, Number(tokensUsed) || 0, tier || "Free"));
+});
+
+app.post("/api/billing/usage-report", async (req, res) => {
+  try {
+    const { tier, tokensUsed, roleplaysUsed, discoveryUsed, featureBreakdown } = req.body;
+    const limitByTier = { Free: 10000, Pro: 100000, Team: 500000, Enterprise: null };
+    const limit = limitByTier[tier] ?? null;
+    const overageTokens = limit == null ? 0 : Math.max(0, Number(tokensUsed) - limit);
+    const overageUSD = Number(((overageTokens / 1000) * TOKEN_RATE_USD).toFixed(2));
+    const breakdown = (featureBreakdown || []).map((row) =>
+      buildTokenCharge(row.feature, Number(row.tokensUsed) || 0, tier)
+    );
+    const totalUSD = breakdown.reduce((sum, row) => sum + row.chargeUSD, 0);
+
+    res.json({
+      tier,
+      tokensUsed: Number(tokensUsed) || 0,
+      tokenLimit: limit,
+      overageTokens,
+      overageUSD,
+      totalFeatureChargesUSD: Number(totalUSD.toFixed(4)),
+      breakdown,
+      roleplaysUsed: Number(roleplaysUsed) || 0,
+      discoveryUsed: Number(discoveryUsed) || 0,
+    });
+  } catch (err) {
+    return handleOpenAIError(err, res, "Usage report failed");
+  }
 });
 
 async function chatCompletion(messages, temperature = 0.7) {
@@ -323,6 +396,173 @@ app.post("/api/tts", async (req, res) => {
   }
 });
 
+app.post("/api/crm/win-loss-autopsy", async (req, res) => {
+  try {
+    const { lead, won, finalValue, reason } = req.body;
+    const prompt = `Analyze this ${won ? "WON" : "LOST"} deal for coaching.
+Client: ${lead.name} at ${lead.company}
+Stage: ${lead.dealStage}, Value: $${finalValue}, Objections: ${(lead.objectionTags || []).join(", ")}
+${won ? "" : `Loss reason: ${reason || "unknown"}`}
+Return JSON only with keys: headline, whatWorked (array), whatToImprove (array), playbookSnippet (string), recommendedDrill (string), nextActions (array).`;
+
+    const raw = await chatCompletion([
+      { role: "system", content: "You are a sales coach. Return valid JSON only." },
+      { role: "user", content: prompt },
+    ], 0.5);
+
+    const cleaned = raw.content.replace(/```json/g, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    res.json({ ...parsed, tokensUsed: raw.tokensUsed });
+  } catch (err) {
+    return handleOpenAIError(err, res, "Win/loss autopsy failed");
+  }
+});
+
+app.post("/api/office/generate-script", async (req, res) => {
+  try {
+    const { scriptType, lead, category, customPrompt } = req.body;
+    const prompt = `Write a ${scriptType || "sales"} script for a rep selling to ${lead?.name || "a prospect"} at ${lead?.company || "their company"}.
+Category: ${category || "general"}. Extra instructions: ${customPrompt || "none"}.
+Return only the script text the rep should say, ready to use.`;
+    const raw = await chatCompletion([
+      { role: "system", content: COACH_PROMPT },
+      { role: "user", content: prompt },
+    ]);
+    res.json({ script: raw.content, tokensUsed: raw.tokensUsed, billing: buildTokenCharge("script-generation", raw.tokensUsed) });
+  } catch (err) {
+    return handleOpenAIError(err, res, "Script generation failed");
+  }
+});
+
+app.post("/api/office/complaint-response", async (req, res) => {
+  try {
+    const { summary, details, clientName, priority } = req.body;
+    const prompt = `Draft a professional, empathetic client complaint response.
+Client: ${clientName}. Priority: ${priority}. Issue: ${summary}. Details: ${details || ""}.
+Return only the response message text.`;
+    const raw = await chatCompletion([
+      { role: "system", content: "You de-escalate client issues and protect the relationship." },
+      { role: "user", content: prompt },
+    ]);
+    res.json({ response: raw.content, tokensUsed: raw.tokensUsed, billing: buildTokenCharge("complaint-response", raw.tokensUsed) });
+  } catch (err) {
+    return handleOpenAIError(err, res, "Complaint response failed");
+  }
+});
+
+app.post("/api/office/billing-agent", async (req, res) => {
+  try {
+    const { tier, tokensUsed, roleplaysUsed, discoveryUsed } = req.body;
+    const prompt = `You are an autonomous billing agent for a sales coaching SaaS app.
+Current plan: ${tier}. Tokens used: ${tokensUsed}. Roleplays: ${roleplaysUsed}. Discovery searches: ${discoveryUsed}.
+Return JSON only with keys: summary (string), recommendedTier (Free|Pro|Team|Enterprise), actions (array of {title, detail}).`;
+    const raw = await chatCompletion([
+      { role: "system", content: "Return valid JSON only." },
+      { role: "user", content: prompt },
+    ], 0.4);
+    const cleaned = raw.content.replace(/```json/g, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    res.json({ ...parsed, tokensUsed: raw.tokensUsed, billing: buildTokenCharge("billing-agent", raw.tokensUsed, tier) });
+  } catch (err) {
+    return handleOpenAIError(err, res, "Billing agent failed");
+  }
+});
+
+app.post("/api/office/manager-brief", async (req, res) => {
+  try {
+    const { pipeline, winRate, staleCount, overdueCount, avgScore } = req.body;
+    const prompt = `Create a manager morning coaching brief.
+Pipeline: $${pipeline}. Win rate: ${winRate}%. Stale deals: ${staleCount}. Overdue follow-ups: ${overdueCount}. Avg roleplay score: ${avgScore}.
+Return JSON with keys: headline, repHighlights (array), coachingAssignments (array), pipelineAlerts (array), teamWins (array).`;
+    const raw = await chatCompletion([
+      { role: "system", content: "You are a sales manager coach. Return valid JSON only." },
+      { role: "user", content: prompt },
+    ], 0.5);
+    const cleaned = raw.content.replace(/```json/g, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    res.json({ ...parsed, tokensUsed: raw.tokensUsed, billing: buildTokenCharge("manager-brief", raw.tokensUsed) });
+  } catch (err) {
+    return handleOpenAIError(err, res, "Manager brief failed");
+  }
+});
+
+app.post("/api/platform/bi-query", async (req, res) => {
+  try {
+    const { question } = req.body;
+    if (!question) return res.status(400).json({ error: "question required" });
+    const result = await chatCompletion([
+      { role: "system", content: "You are a revenue intelligence analyst for sales teams. Answer concisely with actionable insights." },
+      { role: "user", content: String(question) },
+    ]);
+    res.json({ answer: result.content, tokensUsed: result.tokensUsed, billing: buildTokenCharge("crm-assist", result.tokensUsed) });
+  } catch (err) {
+    return handleOpenAIError(err, res, "BI query failed");
+  }
+});
+
+app.post("/api/platform/proposal", async (req, res) => {
+  try {
+    const { clientName, company, amount, scope, notes } = req.body;
+    const prompt = `Write a professional sales proposal for ${clientName} at ${company}. Investment: $${amount}. Scope: ${scope || "standard package"}. Context: ${notes || ""}. Include executive summary, scope, pricing, and next steps.`;
+    const result = await chatCompletion([
+      { role: "system", content: COACH_PROMPT },
+      { role: "user", content: prompt },
+    ]);
+    res.json({ proposal: result.content, tokensUsed: result.tokensUsed, billing: buildTokenCharge("script-generation", result.tokensUsed) });
+  } catch (err) {
+    return handleOpenAIError(err, res, "Proposal generation failed");
+  }
+});
+
+app.post("/api/platform/email", async (req, res) => {
+  try {
+    const { type, clientName, company, stage } = req.body;
+    const prompt = `Write a ${type} email for ${clientName} at ${company}. Deal stage: ${stage}. Include subject line. Ready to send.`;
+    const result = await chatCompletion([
+      { role: "system", content: COACH_PROMPT },
+      { role: "user", content: prompt },
+    ]);
+    res.json({ email: result.content, tokensUsed: result.tokensUsed, billing: buildTokenCharge("crm-assist", result.tokensUsed) });
+  } catch (err) {
+    return handleOpenAIError(err, res, "Email generation failed");
+  }
+});
+
+app.post("/api/platform/live-copilot", async (req, res) => {
+  try {
+    const { clientName, company, stage, transcript, category } = req.body;
+    if (!transcript) return res.status(400).json({ error: "transcript required" });
+    const prompt = `Live sales call coaching. Vertical: ${category || "General"}. Client: ${clientName} at ${company}. Stage: ${stage}.
+Rep just said: "${transcript}"
+Give ONE short coaching tip (1-2 sentences) for what to say or ask next. Be specific and actionable.`;
+    const result = await chatCompletion([
+      { role: "system", content: COACH_PROMPT },
+      { role: "user", content: prompt },
+    ], 0.6);
+    res.json({ tip: result.content, tokensUsed: result.tokensUsed, billing: buildTokenCharge("chat", result.tokensUsed) });
+  } catch (err) {
+    return handleOpenAIError(err, res, "Live co-pilot failed");
+  }
+});
+
+app.post("/api/platform/campaign", async (req, res) => {
+  try {
+    const { name, channel, audience, goal } = req.body;
+    const prompt = `Create a ${channel || "email"} marketing campaign draft.
+Name: ${name}. Audience: ${audience || "prospects"}. Goal: ${goal || "pipeline growth"}.
+Return JSON only with keys: subject, preview, body, cadence (array of day labels).`;
+    const raw = await chatCompletion([
+      { role: "system", content: "You are a B2B marketing strategist. Return valid JSON only." },
+      { role: "user", content: prompt },
+    ], 0.5);
+    const cleaned = raw.content.replace(/```json/g, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    res.json({ ...parsed, tokensUsed: raw.tokensUsed, billing: buildTokenCharge("crm-assist", raw.tokensUsed) });
+  } catch (err) {
+    return handleOpenAIError(err, res, "Campaign generation failed");
+  }
+});
+
 app.listen(PORT, () => {
-  console.log(`Sales Coach API running on port ${PORT}`);
+  console.log(`Sales Coach AI API running on port ${PORT}`);
 });

@@ -11,6 +11,9 @@ final class CRMService {
     var recordAudit: ((AuditEntry) -> Void)?
     var recordClosedOrder: ((ClosedOrder, AuditEntry) -> Void)?
     var onCalendarFollowUp: ((String, Date, String?) -> Void)?
+    var stageChangeGate: ((DealStage, String) -> (allowed: Bool, message: String))?
+    private(set) var lastStageChangeBlockMessage: String?
+    var defaultCommissionRate: Double = 0.10
 
     private let storageKey = "salescoach_leads"
     private let tasksStorageKey = "salescoach_crm_tasks"
@@ -120,29 +123,51 @@ final class CRMService {
             summary: "Added \(newLead.name) to CRM",
             source: source
         ))
+        Task { await integrations?.notifyZapier(lead: newLead, event: "lead.created") }
         return true
     }
 
-    func updateLead(_ lead: Lead, source: AuditSource = .manual, actorId: String? = nil) {
-        guard let index = leads.firstIndex(where: { $0.id == lead.id }) else { return }
+    @discardableResult
+    func updateLead(_ lead: Lead, source: AuditSource = .manual, actorId: String? = nil) -> Bool {
+        guard let index = leads.firstIndex(where: { $0.id == lead.id }) else { return false }
         let previous = leads[index]
+        if lead.dealStage != previous.dealStage, let gate = stageChangeGate {
+            let check = gate(lead.dealStage, actorId ?? lead.ownerId)
+            if !check.allowed {
+                lastStageChangeBlockMessage = check.message
+                return false
+            }
+        }
         var updated = lead
         updated.updatedAt = .now
+        if lead.dealStage != previous.dealStage {
+            updated.dealEvents.insert(
+                DealEvent(type: .stageChange, summary: "Moved from \(previous.dealStage.rawValue) to \(lead.dealStage.rawValue)"),
+                at: 0
+            )
+        }
         leads[index] = updated
         saveLeads()
         notifyGeofencingSync()
         let changes = CRMService.diffLead(previous: previous, updated: updated)
-        guard !changes.isEmpty else { return }
+        guard !changes.isEmpty else {
+            lastStageChangeBlockMessage = nil
+            return true
+        }
         recordAudit?(AuditEntry(
             entityType: .lead,
             entityId: lead.id,
             entityLabel: lead.name,
             actorId: actorId ?? lead.ownerId,
-            action: "lead.updated",
-            summary: "Updated \(lead.name)",
+            action: lead.dealStage != previous.dealStage ? "deal.stage_changed" : "lead.updated",
+            summary: lead.dealStage != previous.dealStage
+                ? "\(lead.name): \(previous.dealStage.rawValue) → \(lead.dealStage.rawValue)"
+                : "Updated \(lead.name)",
             source: source,
             changes: changes
         ))
+        lastStageChangeBlockMessage = nil
+        return true
     }
 
     func deleteLead(_ lead: Lead) {
@@ -185,10 +210,19 @@ final class CRMService {
         saveLeads()
     }
 
-    func moveLead(_ leadId: String, to stage: DealStage, source: AuditSource = .manual, actorId: String? = nil) {
-        guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return }
+    @discardableResult
+    func moveLead(_ leadId: String, to stage: DealStage, source: AuditSource = .manual, actorId: String? = nil) -> Bool {
+        guard let index = leads.firstIndex(where: { $0.id == leadId }) else { return false }
         let previous = leads[index].dealStage
+        guard previous != stage else { return true }
         let lead = leads[index]
+        if let gate = stageChangeGate {
+            let check = gate(stage, actorId ?? lead.ownerId)
+            if !check.allowed {
+                lastStageChangeBlockMessage = check.message
+                return false
+            }
+        }
         leads[index].dealStage = stage
         leads[index].dealEvents.insert(
             DealEvent(type: .stageChange, summary: "Moved from \(previous.rawValue) to \(stage.rawValue)"),
@@ -206,6 +240,8 @@ final class CRMService {
             source: source,
             changes: [FieldChange(field: "stage", oldValue: previous.rawValue, newValue: stage.rawValue)]
         ))
+        lastStageChangeBlockMessage = nil
+        return true
     }
 
     func updatePriority(for leadId: String, priority: LeadPriority) {
@@ -274,27 +310,37 @@ final class CRMService {
     }
 
     @discardableResult
-    func importCSV(_ csv: String, ownerId: String) -> CRMImportResult {
-        let rows = CRMEnhancements.parseCSV(csv)
+    func importCSV(_ csv: String, ownerId: String, source: CRMImportSource = .genericCSV) -> CRMImportResult {
+        importRows(CRMImportParser.parse(text: csv, source: source), ownerId: ownerId, source: source)
+    }
+
+    @discardableResult
+    func importRows(_ rows: [CSVLeadRow], ownerId: String, source: CRMImportSource) -> CRMImportResult {
         guard !rows.isEmpty else {
             return CRMImportResult(imported: 0, skipped: 0, duplicates: 0, errors: ["No valid rows found in file."])
         }
         var imported = 0, skipped = 0, duplicates = 0, errors: [String] = []
         for row in rows {
-            var lead = row.makeLead(ownerId: ownerId)
+            let lead = row.makeLead(ownerId: ownerId)
             if CRMEnhancements.isDuplicate(lead, in: leads) {
                 duplicates += 1
                 continue
             }
             leads.insert(lead, at: 0)
             imported += 1
+            Task { await integrations?.notifyZapier(lead: lead, event: "lead.imported") }
         }
         if imported > 0 {
             saveLeads()
             notifyGeofencingSync()
         }
+        if duplicates > 0 {
+            errors.append("\(duplicates) duplicate contacts skipped.")
+        }
         return CRMImportResult(imported: imported, skipped: skipped, duplicates: duplicates, errors: errors)
     }
+
+    var integrations: IntegrationService?
 
     func revenueForecast() -> RevenueForecast {
         CRMEnhancements.forecast(from: leads)
@@ -393,7 +439,8 @@ final class CRMService {
             finalValue: value,
             lineItems: value > 0 ? [OrderLineItem(name: lead.company.isEmpty ? lead.name : lead.company, unitPrice: value)] : [],
             notes: notes,
-            source: source
+            source: source,
+            commissionRate: defaultCommissionRate
         )
         let auditEntry = AuditEntry(
             entityType: .order,
@@ -583,6 +630,30 @@ final class CRMService {
                 pipelineAdded: monthLeads.reduce(0) { $0 + $1.dealValue }
             )
         }
+    }
+
+    func recentCommunicationActivities(limit: Int = 30) -> [CommunicationActivityItem] {
+        leads.flatMap { lead in
+            lead.activities
+                .filter { $0.type == .call || $0.type == .email }
+                .map { activity in
+                    CommunicationActivityItem(
+                        leadId: lead.id,
+                        leadName: lead.name,
+                        company: lead.company,
+                        phone: lead.phone,
+                        email: lead.email,
+                        activity: activity
+                    )
+                }
+        }
+        .sorted { $0.activity.date > $1.activity.date }
+        .prefix(limit)
+        .map { $0 }
+    }
+
+    func persistLeads() {
+        saveLeads()
     }
 
     private func saveLeads() {

@@ -13,6 +13,9 @@ struct LeadDetailView: View {
     @State private var isLoadingBriefing = false
     @State private var showDealOutcome = false
     @State private var showSnooze = false
+    @State private var showPostCallDebrief = false
+    @State private var autopsy: WinLossAutopsy?
+    @State private var showAutopsy = false
 
     var body: some View {
         ScrollView {
@@ -24,12 +27,15 @@ struct LeadDetailView: View {
                     lead: lead,
                     onCall: { dialLead() },
                     onEmail: { emailLead() },
+                    onText: { textLead() },
                     onLogCall: { logQuickContact(type: .call, summary: "Outbound call with \(lead.name)") },
                     onLogEmail: { logQuickContact(type: .email, summary: "Sent email to \(lead.name)") },
                     onScheduleFollowUp: { showScheduleFollowUp = true },
                     onGenerateFollowUp: { showFollowUp = true }
                 )
                 dealInfoSection
+                CommissionSimulatorSection(lead: lead)
+                LeadAttachmentsSection(attachments: $lead.attachments)
                 LeadTagsEditor(tags: $lead.tags)
                 dealCoachingSection
                 LeadTasksSection(leadId: lead.id)
@@ -49,7 +55,12 @@ struct LeadDetailView: View {
                     )
                 }
                 aiActionSection
-                activitySection
+                LeadActivityFeedView(
+                    lead: lead,
+                    newActivitySummary: $newActivitySummary,
+                    newActivityType: $newActivityType,
+                    onAddActivity: addActivityEntry
+                )
                 datesSection
                 notesSection
 
@@ -95,12 +106,36 @@ struct LeadDetailView: View {
         }
         .sheet(isPresented: $showDealOutcome) {
             DealOutcomeSheet(lead: lead) { finalValue in
+                let value = finalValue ?? lead.dealValue
                 appState.crm.markWon(lead.id, finalValue: finalValue)
                 if let updated = appState.crm.leads.first(where: { $0.id == lead.id }) { lead = updated }
                 Haptic.success()
+                Task {
+                    autopsy = await CoachingIntelligenceService.shared.generateWinAutopsy(for: lead, finalValue: value)
+                    showAutopsy = autopsy != nil
+                }
             } onLost: { reason in
                 appState.crm.markLost(lead.id, reason: reason)
                 if let updated = appState.crm.leads.first(where: { $0.id == lead.id }) { lead = updated }
+                Task {
+                    autopsy = await CoachingIntelligenceService.shared.generateLossAutopsy(for: lead, reason: reason)
+                    showAutopsy = autopsy != nil
+                }
+            }
+        }
+        .sheet(isPresented: $showPostCallDebrief) {
+            PostCallDebriefSheet(lead: lead)
+        }
+        .sheet(isPresented: $showAutopsy) {
+            if let autopsy {
+                NavigationStack {
+                    WinLossAutopsyView(autopsy: autopsy, lead: lead)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { showAutopsy = false }
+                            }
+                        }
+                }
             }
         }
         .onChange(of: lead) { _, newValue in
@@ -185,6 +220,73 @@ struct LeadDetailView: View {
                         .foregroundStyle(AppTheme.tealGreen)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
+            }
+
+            HStack(spacing: 10) {
+                Button { showPostCallDebrief = true } label: {
+                    Label("Post-Call Debrief", systemImage: "phone.arrow.up.right")
+                        .font(.caption.bold())
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(AppTheme.warningOrange.opacity(0.12))
+                        .foregroundStyle(AppTheme.warningOrange)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                if !lead.objectionTags.isEmpty {
+                    NavigationLink {
+                        VoiceRoleplaySetupView(
+                            preselectedScenario: .objectionHandling,
+                            preselectedPersonality: .skeptical,
+                            practiceLead: lead
+                        )
+                    } label: {
+                        Label("Practice Objection", systemImage: "exclamationmark.bubble")
+                            .font(.caption.bold())
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(AppTheme.dangerRed.opacity(0.12))
+                            .foregroundStyle(AppTheme.dangerRed)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if !lead.competitorName.isEmpty {
+                NavigationLink {
+                    BattleCardsView()
+                } label: {
+                    Label("Battle Card: \(lead.competitorName)", systemImage: "flag.fill")
+                        .font(.caption.bold())
+                }
+            }
+
+            HStack(spacing: 10) {
+                NavigationLink {
+                    DealReplayView(lead: lead)
+                } label: {
+                    Label("Deal Replay", systemImage: "play.circle")
+                        .font(.caption.bold())
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(AppTheme.electricBlueBright.opacity(0.12))
+                        .foregroundStyle(AppTheme.electricBlueBright)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+
+                NavigationLink {
+                    ScriptMakerView()
+                } label: {
+                    Label("Script Maker", systemImage: "text.book.closed")
+                        .font(.caption.bold())
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(AppTheme.tealGreen.opacity(0.12))
+                        .foregroundStyle(AppTheme.tealGreen)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
             }
 
             Button {
@@ -340,13 +442,7 @@ struct LeadDetailView: View {
                 set: { lead.objectionTags = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
             )).textFieldStyle(AppTextFieldStyle())
 
-            Picker("Stage", selection: $lead.dealStage) {
-                ForEach(DealStage.allCases) { stage in
-                    Text(stage.rawValue).tag(stage)
-                }
-            }
-            .pickerStyle(.menu)
-            .tint(AppTheme.electricBlue)
+            LeadStageCertificationPicker(lead: $lead)
 
             Picker("Priority", selection: $lead.priority) {
                 ForEach(LeadPriority.allCases) { priority in
@@ -386,54 +482,14 @@ struct LeadDetailView: View {
         .cardStyle()
     }
 
-    private var activitySection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Activity Log")
-                .font(.headline)
-                .foregroundStyle(AppTheme.textPrimary)
-
-            Picker("Type", selection: $newActivityType) {
-                ForEach(LeadActivityType.allCases) { type in
-                    Text(type.rawValue).tag(type)
-                }
-            }
-            .pickerStyle(.menu)
-
-            TextField("Log activity...", text: $newActivitySummary, axis: .vertical)
-                .lineLimit(2...4)
-                .textFieldStyle(AppTextFieldStyle())
-
-            SecondaryButton(title: "Add Activity", icon: "plus.circle") {
-                guard !newActivitySummary.isEmpty else { return }
-                let activity = LeadActivity(type: newActivityType, summary: newActivitySummary)
-                lead.activities.insert(activity, at: 0)
-                appState.crm.addActivity(to: lead.id, activity: activity)
-                newActivitySummary = ""
-            }
-
-            ForEach(lead.activities.prefix(5)) { activity in
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: activity.type.icon)
-                        .foregroundStyle(AppTheme.electricBlueBright)
-                        .frame(width: 20)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(activity.summary)
-                            .font(.caption)
-                            .foregroundStyle(AppTheme.textPrimary)
-                        Text(activity.date.formatted(date: .abbreviated, time: .shortened))
-                            .font(.caption2)
-                            .foregroundStyle(AppTheme.textMuted)
-                    }
-                }
-            }
-        }
-        .cardStyle()
-    }
-
     private var datesSection: some View {
         VStack(spacing: 12) {
-            InfoRow(label: "Phone", value: lead.phone.isEmpty ? "—" : lead.phone)
-            InfoRow(label: "Email", value: lead.email.isEmpty ? "—" : lead.email)
+            LeadContactLinkRow(
+                lead: lead,
+                onCall: { dialLead() },
+                onEmail: { emailLead() },
+                onText: { textLead() }
+            )
             InfoRow(label: "Last Contacted", value: lead.lastContactedDate?.formatted(date: .abbreviated, time: .omitted) ?? "Never")
             InfoRow(label: "Next Follow-Up", value: lead.nextFollowUpDate?.formatted(date: .abbreviated, time: .omitted) ?? "Not set")
             if let expectedClose = lead.expectedCloseDate {
@@ -497,19 +553,29 @@ struct LeadDetailView: View {
     }
 
     private func dialLead() {
-        let digits = lead.phone.filter { $0.isNumber || $0 == "+" }
-        guard !digits.isEmpty, let url = URL(string: "tel://\(digits)") else { return }
-        UIApplication.shared.open(url)
-        logQuickContact(type: .call, summary: "Called \(lead.name)")
+        LeadCommunicationService.call(lead: lead) {
+            logQuickContact(type: .call, summary: "Called \(lead.name)")
+        }
     }
 
     private func emailLead() {
-        guard !lead.email.isEmpty else { return }
-        let subject = "Following up — \(lead.company.isEmpty ? lead.name : lead.company)"
-        let encoded = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        guard let url = URL(string: "mailto:\(lead.email)?subject=\(encoded)") else { return }
-        UIApplication.shared.open(url)
-        logQuickContact(type: .email, summary: "Emailed \(lead.name)")
+        LeadCommunicationService.email(lead: lead) {
+            logQuickContact(type: .email, summary: "Emailed \(lead.name)")
+        }
+    }
+
+    private func textLead() {
+        LeadCommunicationService.text(lead: lead) {
+            logQuickContact(type: .note, summary: "Texted \(lead.name)")
+        }
+    }
+
+    private func addActivityEntry() {
+        guard !newActivitySummary.isEmpty else { return }
+        let activity = LeadActivity(type: newActivityType, summary: newActivitySummary)
+        lead.activities.insert(activity, at: 0)
+        appState.crm.addActivity(to: lead.id, activity: activity)
+        newActivitySummary = ""
     }
 
     private func persistGoals() {
